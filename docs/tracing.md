@@ -1,303 +1,206 @@
-# Tracing
+# Execution Graph
 
-Every agent execution is automatically traced, capturing the full execution tree including tool calls, subagent executions, events, and messages.
+Every agent execution creates an execution graph, capturing the full execution tree including tool calls, subagent executions, events, and messages.
 
-## Automatic Tracing
+## Accessing the Execution Graph
 
-Tracing is built into `agent.run()` - no setup required:
+The execution graph is returned from `agent.run()`:
 
 ```typescript
-const { stream, trace } = agent.run("Hello")
+const { stream, graph, node } = myAgent.run("Hello")
 
 // Consume the stream
 for await (const event of stream) {
   console.log(event)
 }
 
-// Get the trace after execution completes
-const executionTrace = await trace
+// After streaming completes, access the execution graph
+console.log(node.status) // "completed" | "failed"
+console.log(node.events) // All events from this agent
 ```
 
-## The Execution Trace
+## Graph Structure
 
-The trace captures:
+The graph captures:
 
 - **Agent nodes** - Each agent execution (root and subagents)
 - **Tool nodes** - Each tool call
 - **Events** - All events that occurred during execution
 - **Messages** - LLM messages stored in memory
-- **Timing** - Start/end times for each node
+- **Timing** - Execution duration
 - **Status** - Whether each node completed or failed
 
-### Trace Structure
+### Traversing the Graph
 
 ```typescript
-const trace = await agent.run("Hello").trace
+import { serializeNode } from "@gumbee/agent"
 
-// Get the root node
-const root = trace.getRoot()
-console.log(root.type) // "agent"
-console.log(root.name) // Agent name
-console.log(root.input) // The prompt
-console.log(root.output) // Final output
-console.log(root.status) // "complete" | "error"
-console.log(root.events) // All events
-console.log(root.messages) // LLM messages
+const { stream, graph, node } = myAgent.run("Hello")
 
-// Get child nodes (tools and subagents)
-const children = trace.getChildren(root.id)
-for (const child of children) {
+for await (const event of stream) {
+  // ...
+}
+
+// graph is the RootExecutionNode (entry point)
+// node is the AgentExecutionNode for the agent
+
+console.log(node.name) // Agent name
+console.log(node.input) // The prompt
+console.log(node.status) // "completed" | "failed"
+console.log(node.events) // All events
+console.log(node.messages) // LLM messages
+
+// Traverse children (tools and subagents)
+for (const child of node.children) {
   if (child.type === "tool") {
     console.log(`Tool: ${child.name}`, child.input, child.output)
   } else if (child.type === "agent") {
     console.log(`Subagent: ${child.name}`)
   }
 }
-```
 
-### Serialization for Persistence
-
-```typescript
-const trace = await agent.run("Hello").trace
-
-// Convert to JSON for database storage
-const json = trace.toJSON()
-
-// Store in your database
-await db.insert(traces).values({
-  sessionId: "xxx",
-  data: json,
-})
+// Serialize for storage
+const json = serializeNode(graph)
 ```
 
 ## Node Types
 
+### RootExecutionNode
+
+The entry point of the execution graph:
+
+```typescript
+type RootExecutionNode = {
+  type: "root"
+  children: ExecutionNode[]
+}
+```
+
 ### AgentExecutionNode
+
+Tracks agent execution:
 
 ```typescript
 type AgentExecutionNode = {
   type: "agent"
-  id: string
   name: string
   description: string
   input: unknown
   output?: unknown
-  agent: Agent // Reference to the agent instance
   messages: ModelMessage[] // LLM messages
-  events: AgentEvent[]
-  childIds: string[]
-  status: "pending" | "running" | "complete" | "error"
-  startTime: number
-  endTime?: number
+  events: RuntimeYield[] // All events
+  children: ExecutionNode[] // Tools and subagents
+  status: "pending" | "running" | "completed" | "failed"
   error?: Error
 }
 ```
 
 ### ToolExecutionNode
 
+Tracks tool execution:
+
 ```typescript
 type ToolExecutionNode = {
   type: "tool"
-  id: string
   name: string
   description: string
+  toolCallId: string
   input: unknown
   output?: unknown
-  tool: Tool // Reference to the tool instance
-  events: AgentEvent[]
-  childIds: string[]
-  status: "pending" | "running" | "complete" | "error"
-  startTime: number
-  endTime?: number
+  events: RuntimeYield[] // Tool events
+  children: ExecutionNode[] // Nested calls
+  status: "pending" | "running" | "completed" | "failed"
   error?: Error
 }
 ```
 
-## Multiple Traces
-
-Pass additional traces for live observability:
+## Serialization for Persistence
 
 ```typescript
-import { HttpTrace } from "@gumbee/agent"
+import { serializeNode } from "@gumbee/agent"
 
-// HttpTrace sends events to the observability dashboard via HTTP
-const httpTrace = new HttpTrace()
-
-const { stream, trace } = agent.run(
-  "Hello",
-  undefined,
-  { traces: [httpTrace] }, // Additional traces
-)
-
-// Both traces receive updates:
-// - InMemoryTrace (returned as `trace`) for database persistence
-// - HttpTrace for live dashboard
-```
-
-## HttpTrace for Live Observability
-
-The `HttpTrace` class sends trace events to the observability dashboard server via HTTP. It's compatible with all environments including Cloudflare Workers.
-
-### Basic Usage
-
-```typescript
-import { Agent, HttpTrace } from "@gumbee/agent"
-
-const httpTrace = new HttpTrace()
-
-const { stream } = agent.run("Analyze this data", undefined, {
-  traces: [httpTrace],
-})
-
-for await (const event of stream) {
-  // Events are automatically sent to the dashboard
-}
-```
-
-### Configuration
-
-```typescript
-const httpTrace = new HttpTrace({
-  url: "http://localhost:7667/api/trace", // Dashboard endpoint
-  room: "my-traces", // Room name for grouping
-  batch: true, // Batch events before sending
-  batchInterval: 100, // Batch interval in ms
-})
-```
-
-| Option          | Default                           | Description                    |
-| --------------- | --------------------------------- | ------------------------------ |
-| `url`           | `http://localhost:7667/api/trace` | HTTP endpoint of the dashboard |
-| `room`          | `llm-traces`                      | Room name for grouping traces  |
-| `batch`         | `false`                           | Whether to batch events        |
-| `batchInterval` | `100`                             | Batch interval in milliseconds |
-
-## AsyncLocalStorage Context
-
-The trace context is managed via Node.js `AsyncLocalStorage`, automatically propagating through async operations:
-
-```typescript
-import { getTraceContext, addEventToTraces, addMessageToTraces } from "@gumbee/agent"
-
-// Inside a tool or custom code running within agent context:
-const ctx = getTraceContext()
-if (ctx) {
-  console.log("Current node:", ctx.currentNodeId)
-  console.log("Active traces:", ctx.traces.length)
-
-  // Add custom events
-  addEventToTraces({ type: "custom", data: "..." })
-}
-```
-
-### Context Helpers
-
-| Function                       | Description                                    |
-| ------------------------------ | ---------------------------------------------- |
-| `getTraceContext()`            | Get current trace context (or undefined)       |
-| `withTraceContext(ctx, fn)`    | Run function with trace context                |
-| `addEventToTraces(event)`      | Add event to all active traces                 |
-| `addMessageToTraces(message)`  | Add message to all active traces               |
-| `startToolNode(tool, input)`   | Start a tool node, returns completion handle   |
-| `startAgentNode(agent, input)` | Start an agent node, returns completion handle |
-| `createChildContext(nodeId)`   | Create child context with new node ID          |
-| `generateNodeId()`             | Generate a unique node ID (for custom traces)  |
-
-## Use Cases
-
-### 1. Database Persistence
-
-Store traces for later analysis:
-
-```typescript
-const { stream, trace } = agent.run("Analyze this document...")
+const { stream, graph } = myAgent.run("Analyze this document...")
 
 for await (const event of stream) {
   // Process events
 }
 
-const executionTrace = await trace
+// Convert to JSON for database storage
+const json = serializeNode(graph)
+
+// Store in your database
 await db.insert(agentRuns).values({
   id: generateId(),
   agentName: "document-analyzer",
-  trace: executionTrace.toJSON(),
+  graph: json,
   createdAt: new Date(),
 })
 ```
 
-### 2. Live Dashboard
+## Use Cases
 
-Use the built-in dashboard for real-time observability:
+### 1. Database Persistence
 
-```bash
-# Start the dashboard
-bunx @gumbee/observability dashboard
-```
+Store execution graphs for later analysis:
 
 ```typescript
-import { Agent, HttpTrace } from "@gumbee/agent"
-
-const trace = new HttpTrace()
-const { stream } = agent.run("Task", undefined, { traces: [trace] })
+const { stream, graph } = myAgent.run("Analyze this document...")
 
 for await (const event of stream) {
-  // Events sync to dashboard in real-time
+  // Process events
 }
 
-// Open http://localhost:7667 to see the trace
+await db.insert(agentRuns).values({
+  id: generateId(),
+  agentName: "document-analyzer",
+  graph: serializeNode(graph),
+  createdAt: new Date(),
+})
 ```
 
-See **[@gumbee/observability](../../../observability/README.md)** for full dashboard documentation.
-
-### 3. Debugging
+### 2. Debugging
 
 Inspect the full execution tree:
 
 ```typescript
-const { stream, trace } = agent.run("Complex task with tools")
+const { stream, graph, node } = myAgent.run("Complex task with tools")
 
 for await (const event of stream) {
 }
 
-const t = await trace
-const root = t.getRoot()!
-
-function printNode(node: ExecutionNode, indent = 0) {
+function printNode(n: ExecutionNode, indent = 0) {
   const prefix = "  ".repeat(indent)
-  console.log(`${prefix}[${node.type}] ${node.name}: ${node.status}`)
+  console.log(`${prefix}[${n.type}] ${n.name}: ${n.status}`)
 
-  for (const childId of node.childIds) {
-    const child = t.getNode(childId)
-    if (child) printNode(child, indent + 1)
+  for (const child of n.children) {
+    printNode(child, indent + 1)
   }
 }
 
-printNode(root)
-// [agent] orchestrator: complete
-//   [tool] search: complete
-//   [agent] analyzer: complete
-//     [tool] summarize: complete
-//   [tool] format-output: complete
+printNode(node)
+// [agent] orchestrator: completed
+//   [tool] search: completed
+//   [agent] analyzer: completed
+//     [tool] summarize: completed
+//   [tool] format-output: completed
 ```
 
-### 4. Cost Tracking
+### 3. Cost Tracking
 
 Aggregate usage across the execution tree:
 
 ```typescript
-const { stream, trace } = agent.run("Research task")
+const { stream, node } = myAgent.run("Research task")
 
 for await (const event of stream) {
 }
 
-const t = await trace
-
-function aggregateUsage(node: ExecutionNode): Usage {
+function aggregateUsage(n: ExecutionNode): Usage {
   let usage = { inputTokens: 0, outputTokens: 0, totalTokens: 0 }
 
-  // Find complete events for usage
-  for (const event of node.events) {
-    if (event.type === "complete" && event.usage) {
+  // Find step-end events for usage
+  for (const event of n.events) {
+    if (event.type === "agent-step-end" && event.usage) {
       usage.inputTokens += event.usage.inputTokens
       usage.outputTokens += event.usage.outputTokens
       usage.totalTokens += event.usage.totalTokens
@@ -305,19 +208,34 @@ function aggregateUsage(node: ExecutionNode): Usage {
   }
 
   // Recurse into children
-  for (const childId of node.childIds) {
-    const child = t.getNode(childId)
-    if (child) {
-      const childUsage = aggregateUsage(child)
-      usage.inputTokens += childUsage.inputTokens
-      usage.outputTokens += childUsage.outputTokens
-      usage.totalTokens += childUsage.totalTokens
-    }
+  for (const child of n.children) {
+    const childUsage = aggregateUsage(child)
+    usage.inputTokens += childUsage.inputTokens
+    usage.outputTokens += childUsage.outputTokens
+    usage.totalTokens += childUsage.totalTokens
   }
 
   return usage
 }
 
-const totalUsage = aggregateUsage(t.getRoot()!)
+const totalUsage = aggregateUsage(node)
 console.log(`Total tokens: ${totalUsage.totalTokens}`)
 ```
+
+### 4. Event Path Tracking
+
+Events include a `path` array showing the execution hierarchy:
+
+```typescript
+for await (const event of stream) {
+  console.log(event.path, event.type)
+  // ["orchestrator"] agent-begin
+  // ["orchestrator"] agent-step-begin
+  // ["orchestrator"] tool-begin
+  // ["orchestrator", "search"] tool-end
+  // ["orchestrator"] agent-step-end
+  // ...
+}
+```
+
+The path helps you understand which agent or tool emitted each event in hierarchical agent setups.
