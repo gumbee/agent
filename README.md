@@ -1,6 +1,15 @@
 # @gumbee/agent
 
-AI SDK integration for structured and rich LLM responses.
+A powerful, composable agent framework built on the [Vercel AI SDK](https://sdk.vercel.ai/).
+
+## Features
+
+- **Hierarchical Agents** — Agents can use other agents as tools, enabling complex multi-agent workflows
+- **Typed Tools** — Define tools with Zod schemas for type-safe inputs and outputs
+- **Middleware** — Composable middleware for fallbacks, logging, caching, and more
+- **Rich Widgets** — Stream structured widget outputs for dynamic UI rendering
+- **Execution Graph** — Full execution tracking for debugging and persistence
+- **Provider Agnostic** — Works with OpenAI, Anthropic, Google, and any AI SDK provider
 
 ## Installation
 
@@ -8,54 +17,45 @@ AI SDK integration for structured and rich LLM responses.
 npm install @gumbee/agent ai
 ```
 
-## Usage
+## Quick Start
 
-### Structured Output
-
-Stream structured JSON objects from a language model with progressive parsing:
-
-```ts
-import { structured } from "@gumbee/agent"
-import { z } from "@gumbee/structured"
+```typescript
+import { agent, tool, z } from "@gumbee/agent"
 import { openai } from "@ai-sdk/openai"
 
-const result = structured({
-  model: openai("gpt-4o"),
-  schema: z.object({ name: z.string(), age: z.number() }),
-  prompt: "Generate a person",
+// Define a tool
+const searchTool = tool({
+  name: "search",
+  description: "Search the web",
+  input: z.object({ query: z.string() }),
+  execute: async ({ query }) => {
+    return { results: await search(query) }
+  },
 })
 
-// Stream partial objects as they build
-for await (const partial of result.partials) {
-  console.log(partial) // { name: "Jo" }, { name: "John" }, { name: "John", age: 30 }
-}
-
-// Or await the final object
-const person = await result.object
-```
-
-### Rich Widgets
-
-Stream rich widget responses for dynamic UI rendering:
-
-```ts
-import { rich } from "@gumbee/agent"
-import { DescribeRegistry } from "@gumbee/structured/describe"
-import { openai } from "@ai-sdk/openai"
-
-const registry = new DescribeRegistry()
-// Register your widget schemas...
-
-const { widgets } = rich({
+// Create an agent
+const myAgent = agent({
+  name: "assistant",
+  description: "A helpful assistant",
   model: openai("gpt-4o"),
-  widgets: registry,
-  messages: [...],
+  system: "You are a helpful assistant.",
+  tools: [searchTool],
 })
 
-for await (const snapshot of widgets) {
-  // Stream to frontend to display widgets
+// Run the agent
+const { stream } = myAgent.run("What's the weather in Tokyo?")
+
+for await (const event of stream) {
+  if (event.type === "agent-stream" && event.part.type === "text-delta") {
+    process.stdout.write(event.part.textDelta)
+  }
 }
 ```
+
+## Documentation
+
+- [Agents](./docs/agents.md) — Creating and running agents
+- [Execution Graph](./docs/tracing.md) — Tracking and debugging executions
 
 ## License
 
