@@ -91,3 +91,27 @@ export function getMiddlewares<Context = any>(): Middleware<Context>[] {
 export function runWithMiddlewares<T>(middlewares: Middleware[], fn: () => T): T {
   return middlewareStorage.run(middlewares, fn)
 }
+
+/**
+ * Wrap an async generator so each iteration runs within the middleware context.
+ * This is necessary because async generators are lazily evaluated - the code
+ * inside the generator only runs when .next() is called, which may be outside
+ * the original runWithMiddlewares scope.
+ */
+export async function* wrapGeneratorWithMiddlewares<T, TReturn>(
+  middlewares: Middleware[],
+  generator: AsyncGenerator<T, TReturn, unknown>,
+): AsyncGenerator<T, TReturn, unknown> {
+  try {
+    while (true) {
+      const result = await middlewareStorage.run(middlewares, () => generator.next())
+      if (result.done) {
+        return result.value
+      }
+      yield result.value
+    }
+  } finally {
+    // Ensure cleanup runs in context if generator is closed early
+    await middlewareStorage.run(middlewares, () => generator.return(undefined as TReturn))
+  }
+}

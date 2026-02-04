@@ -7,7 +7,7 @@ import { z } from "@gumbee/structured"
 import { getCurrentNode, getMiddlewares, getPath } from "./graph/context"
 import { createToolNode } from "./graph/node"
 import type { ToolMiddlewareContext, ToolMiddlewareResult } from "./middleware"
-import { createRef, type RuntimeYield, type Runner, type RunnerEnvironment, type Tool, type ToolConfig, type ToolYield } from "./types"
+import { type RuntimeYield, type Runner, type RunnerEnvironment, type Tool, type ToolConfig, type ToolYield } from "./types"
 
 // =============================================================================
 // Helpers
@@ -57,69 +57,63 @@ export const tool = <Context = {}, TSchema extends z.ZodSchema = z.ZodSchema<any
       // Get middlewares from current context that want to handle this tool
       const middlewares = getMiddlewares<Context>().filter((m) => m.shouldDescendIntoTool?.(thisTool) ?? false)
 
-      // Base execution function (current tool logic)
-      const base = (ctx: ToolMiddlewareContext<Context, Input>): ToolMiddlewareResult<Output> => {
-        const inputRef = createRef({ value: ctx.input as unknown })
+      // Base execution function as async generator
+      async function* base(ctx: ToolMiddlewareContext<Context, Input>): ToolMiddlewareResult<Output> {
+        // Get parent node from context and create ToolExecutionNode
+        const parent = getCurrentNode() ?? null
+        const node = createToolNode(config.name, ctx.input, parent)
+        const path = getPath(node)
 
-        const stream = (async function* (): AsyncGenerator<ToolYield, Output, unknown> {
-          // Get parent node from context and create ToolExecutionNode
-          const parent = getCurrentNode() ?? null
-          const node = createToolNode(config.name, inputRef.value, parent)
-          const path = getPath(node)
+        node.setStatus("running")
 
-          node.setStatus("running")
+        const toolCallId = node.id
 
-          const toolCallId = node.id
+        yield node.addEvent({ type: "tool-begin", path, tool: config.name, toolCallId, input: ctx.input })
 
-          yield node.addEvent({ type: "tool-begin", path, tool: config.name, toolCallId, input: inputRef.value })
+        try {
+          // Execute the tool - handle both async generators and plain async functions
+          const executionResult = config.execute(ctx.input, ctx.context, { abort: ctx.env.abort, toolCallId })
+          let result: Output
 
-          try {
-            // Execute the tool - handle both async generators and plain async functions
-            const executionResult = config.execute(inputRef.value as Input, ctx.context, { abort: ctx.env.abort, toolCallId })
-            let result: Output
+          // Check if it's an async generator (has .next method) or a promise
+          if (isAsyncGenerator(executionResult)) {
+            // It's an async generator - iterate and forward yielded events
+            while (true) {
+              const iterResult = await executionResult.next()
 
-            // Check if it's an async generator (has .next method) or a promise
-            if (isAsyncGenerator(executionResult)) {
-              // It's an async generator - iterate and forward yielded events
-              while (true) {
-                const iterResult = await executionResult.next()
-
-                if (iterResult.done) {
-                  result = iterResult.value
-                  break
-                }
-
-                // Yield custom events from the tool's execute function
-                yield node.addEvent({
-                  type: "tool-progress",
-                  path,
-                  tool: config.name,
-                  toolCallId,
-                  event: iterResult.value,
-                })
+              if (iterResult.done) {
+                result = iterResult.value
+                break
               }
-            } else {
-              // It's a promise - just await the result
-              result = await executionResult
+
+              // Yield custom events from the tool's execute function
+              yield node.addEvent({
+                type: "tool-progress",
+                path,
+                tool: config.name,
+                toolCallId,
+                event: iterResult.value,
+              })
             }
-
-            node.setOutput(result)
-            node.setStatus("completed")
-
-            yield node.addEvent({ type: "tool-end", path, tool: config.name, toolCallId, output: result })
-
-            return result
-          } catch (error) {
-            console.error(`[tool:${config.name}] Error:`, error)
-            yield node.addEvent({ type: "tool-error", path, tool: config.name, toolCallId, error: error as Error })
-
-            node.setError(error as Error)
-            node.setStatus("failed")
-            throw error
+          } else {
+            // It's a promise - just await the result
+            result = await executionResult
           }
-        })()
 
-        return { input: inputRef, stream }
+          node.setOutput(result)
+          node.setStatus("completed")
+
+          yield node.addEvent({ type: "tool-end", path, tool: config.name, toolCallId, output: result })
+
+          return result
+        } catch (error) {
+          console.error(`[tool:${config.name}] Error:`, error)
+          yield node.addEvent({ type: "tool-error", path, tool: config.name, toolCallId, error: error as Error })
+
+          node.setError(error as Error)
+          node.setStatus("failed")
+          throw error
+        }
       }
 
       // Compose middleware using handleTool (reduceRight so first middleware wraps outermost)
@@ -136,10 +130,8 @@ export const tool = <Context = {}, TSchema extends z.ZodSchema = z.ZodSchema<any
         env,
       }
 
-      const result = wrappedExecute(middlewareContext)
-
       // Yield all events from the stream and return the final output
-      return yield* result.stream
+      return yield* wrappedExecute(middlewareContext)
     },
   }
 

@@ -1,14 +1,11 @@
-/** @jsxImportSource @gumbee/prompt */
-
-import { type ModelMessage, streamText, type TextStreamPart, type ToolSet, type UserModelMessage } from "ai"
-import { prompt } from "@gumbee/prompt/ai-sdk"
-import { AgentLoopPrompt } from "../prompts/loop"
-import { getCurrentNode, getPath } from "./graph/context"
+import { type ModelMessage, streamText, type TextStreamPart, type ToolSet } from "ai"
+import { getCurrentNode, getMiddlewares, getPath } from "./graph/context"
 import { createAsyncEventQueue, mergeStreamWithQueue } from "./merge-streams"
+import type { AgentStepMiddlewareContext, AgentStepMiddlewareResult, Middleware } from "./middleware"
 import { convertRunnersForAI } from "./tool"
 import { createWidgetSchemaTool } from "./tool-definitions/widget-schema-tool"
 import { transformWidgetStream } from "./widgets-transform"
-import type { RuntimeYield, Runner, AgentLoopContext } from "./types"
+import type { RuntimeYield, Runner, AgentLoopContext, FinishReason } from "./types"
 
 /** Hard limit to prevent infinite loops if stop condition is misconfigured */
 const MAX_STEPS_HARD_LIMIT = 100
@@ -22,6 +19,111 @@ function isToolEvent(item: unknown): item is RuntimeYield {
 }
 
 /**
+ * Compose step middleware chain.
+ * Reduces middlewares right-to-left so first middleware wraps outermost.
+ */
+function composeStepMiddleware<Context>(
+  middlewares: Middleware<Context>[],
+  base: (c: AgentStepMiddlewareContext<Context>) => AgentStepMiddlewareResult,
+): (c: AgentStepMiddlewareContext<Context>) => AgentStepMiddlewareResult {
+  return middlewares.reduceRight<(c: AgentStepMiddlewareContext<Context>) => AgentStepMiddlewareResult>(
+    (next, mw) => (c) => (mw.handleAgentStep ? mw.handleAgentStep(c, next) : next(c)),
+    base,
+  )
+}
+
+/**
+ * Execute a single LLM step. This is the base function that middleware wraps.
+ * Emits agent-step-llm-call event, streams the response, stores messages, and returns the finish reason.
+ */
+async function* executeStep<Context>(c: AgentStepMiddlewareContext<Context>): AgentStepMiddlewareResult {
+  const { path, model, tools: baseTools, widgets, widgetsPickerModel, providerOptions, env, context, memory } = c
+
+  // Collect all tools including widget schema tool (uses c.model which may be modified by middleware)
+  const allTools: Runner<Context>[] = [...baseTools]
+
+  if (widgets && widgets.size > 0) {
+    const widgetTool = createWidgetSchemaTool(widgets, widgetsPickerModel ?? model) as Runner<Context>
+    allTools.push(widgetTool)
+  }
+
+  // Build full system prompt from system method, base tools, and widget tool
+  const baseSystemPrompt = typeof c.system === "function" ? await c.system(context) : (c.system ?? "")
+  const toolInstructions = allTools.map((tool) => tool.instructions).filter(Boolean)
+  const fullSystemPrompt = [baseSystemPrompt, ...toolInstructions].join("\n\n")
+
+  // Read messages from memory and construct with our system prompt (filter out existing system messages)
+  const baseMessages = await memory.read().then((m) => m.filter((x) => x.role !== "system"))
+  const messages: ModelMessage[] = [{ role: "system", content: fullSystemPrompt }, ...baseMessages]
+
+  // Emit LLM call event with final system prompt, messages, and model info
+  // Access model info safely - LanguageModel is an object with modelId/provider at runtime
+  const modelId = typeof model === "object" && "modelId" in model ? model.modelId : String(model)
+  const provider = typeof model === "object" && "provider" in model ? model.provider : "unknown"
+
+  yield {
+    type: "agent-step-llm-call",
+    path,
+    system: fullSystemPrompt,
+    messages,
+    modelId,
+    provider,
+  }
+
+  // Convert runners (tools/agents) to AI SDK format with async event queue for real-time merging
+  const toolEventQueue = createAsyncEventQueue<RuntimeYield>()
+  const tools =
+    allTools.length > 0
+      ? convertRunnersForAI(allTools, context, env, (event) => {
+          toolEventQueue.push(event)
+        })
+      : undefined
+
+  // Call the LLM
+  const result = streamText({
+    model: model,
+    messages: messages,
+    tools,
+    providerOptions: providerOptions,
+    abortSignal: env.abort,
+  })
+
+  // Check if widgets are configured
+  const hasWidgets = widgets && widgets.size > 0
+
+  // Stream response and emit events (transform with widget parsing if configured)
+  // Use mergeStreamWithQueue to properly interleave tool events with stream events in real-time
+  // Queue is automatically closed when the stream completes
+  const baseStream = hasWidgets ? transformWidgetStream(result.fullStream, widgets!) : result.fullStream
+  const mergedStream = mergeStreamWithQueue(baseStream, toolEventQueue)
+
+  for await (const item of mergedStream) {
+    // Check if this is a tool event from the queue (has 'type' property matching tool event types)
+    if (isToolEvent(item)) {
+      // Yield tool events (e.g., tool-progress, tool-error) directly
+      yield item
+    } else if (item.type === "text-delta") {
+      // Yield text delta as agent-stream event with path
+      yield { type: "agent-stream", path, part: { type: "text-delta", text: item.text } as TextStreamPart<ToolSet> }
+    } else if (item.type === "widget-delta") {
+      // Yield widget delta with path
+      yield { type: "widget-delta", path, index: item.index, widget: item.widget }
+    }
+  }
+
+  // Get the response and finish reason
+  const { messages: newMessages } = await result.response
+  const finishReason = (await result.finishReason) as FinishReason
+
+  // Store new messages in memory
+  for (const message of newMessages) {
+    await memory.store(message as ModelMessage)
+  }
+
+  return finishReason
+}
+
+/**
  * Core execution generator that runs the agentic loop.
  * This is used both by run() for root agents and by execute() for sub-agents.
  *
@@ -29,7 +131,7 @@ function isToolEvent(item: unknown): item is RuntimeYield {
  * graph-based trace system.
  */
 export async function* executeLoop<Context>(data: AgentLoopContext<Context>): AsyncGenerator<RuntimeYield, void, unknown> {
-  const { prompt: userPrompt, system, tools, context, env, memory, widgets, widgetsPickerModel, model, providerOptions, stopCondition } = data
+  const { system, tools, context, env, memory, widgets, widgetsPickerModel, model, providerOptions, stopCondition } = data
   // Get current node from context, or create new one for sub-agents
   const node = getCurrentNode()
 
@@ -44,24 +146,12 @@ export async function* executeLoop<Context>(data: AgentLoopContext<Context>): As
   try {
     // === INITIALIZATION ===
 
-    // 1. Build system prompt (supports dynamic prompts via context)
-    const baseSystemPrompt = typeof system === "function" ? system(context) : (system ?? "")
+    // 1. Collect base tools (widget schema tool is added per-step in executeStep to use potentially modified model)
+    const baseTools: Runner<Context>[] = [...(tools ?? [])]
 
-    // 2. Collect all tools, including widget schema tool if widgets are configured
-    const allTools: Runner<Context>[] = [...(tools ?? [])]
-
-    // Add widget schema tool if widgets registry is provided
-    if (widgets && widgets.size > 0) {
-      allTools.push(createWidgetSchemaTool(widgets, widgetsPickerModel ?? model) as Runner<Context>)
-    }
-
-    // 3. Build full system prompt including tool instructions
-    const fullSystemPrompt = [baseSystemPrompt, ...allTools.map((tool) => tool.instructions).filter(Boolean)].join("\n\n")
-
-    // 4. Store user message and reset appended tracking
-    const userMessage: UserModelMessage = typeof userPrompt === "string" ? { role: "user", content: userPrompt } : userPrompt
-    await memory.store(userMessage)
-    await memory.appended() // Reset appended tracking
+    // 2. Get middlewares and compose step middleware chain
+    const middlewares = getMiddlewares<Context>()
+    const wrappedStep = composeStepMiddleware(middlewares, executeStep)
 
     let step = 0
 
@@ -72,82 +162,42 @@ export async function* executeLoop<Context>(data: AgentLoopContext<Context>): As
         throw new Error("Agent execution was aborted")
       }
 
-      // 5. Read current conversation from memory (filter system messages - provided via JSX)
-      const baseMessages = await memory.read().then((m) => m.filter((x) => x.role !== "system"))
+      // Emit step-begin (outside middleware chain)
+      yield node.addEvent({ type: "agent-step-begin", path, step })
 
-      // 6. Enhance with system prompt using JSX engine
-      const messagesWithSystem = prompt(<AgentLoopPrompt system={fullSystemPrompt} tools={allTools} messages={baseMessages} />)
-
-      yield node.addEvent({
-        type: "agent-step-begin",
-        path,
+      // Build step context for middleware chain (step and path are readonly, not modifiable by middleware)
+      // Note: executeStep builds system prompt, reads messages from memory, adds widget tool, and stores messages
+      const stepContext: AgentStepMiddlewareContext<Context> = {
         step,
-        system: fullSystemPrompt,
-        messages: messagesWithSystem,
-      })
-
-      // 7. Convert runners (tools/agents) to AI SDK format with async event queue for real-time merging
-      const toolEventQueue = createAsyncEventQueue<RuntimeYield>()
-      const tools =
-        allTools.length > 0
-          ? convertRunnersForAI(allTools, context, env, (event) => {
-              toolEventQueue.push(event)
-            })
-          : undefined
-
-      // 8. Call the LLM
-      const result = streamText({
-        model: model,
-        messages: messagesWithSystem,
-        tools,
-        providerOptions: providerOptions,
-        abortSignal: env.abort,
-      })
-
-      // 9. Check if widgets are configured
-      const hasWidgets = widgets && widgets.size > 0
-
-      // 10. Stream response and emit events (transform with widget parsing if configured)
-      // Use mergeStreamWithQueue to properly interleave tool events with stream events in real-time
-      // Queue is automatically closed when the stream completes
-      const baseStream = hasWidgets ? transformWidgetStream(result.fullStream, widgets!) : result.fullStream
-      const mergedStream = mergeStreamWithQueue(baseStream, toolEventQueue)
-
-      for await (const item of mergedStream) {
-        // Check if this is a tool event from the queue (has 'type' property matching tool event types)
-        if (isToolEvent(item)) {
-          // Yield tool events (e.g., tool-progress, tool-error) directly
-          yield node.addEvent(item)
-        } else if (item.type === "text-delta") {
-          // This is a preamble text-delta from the widget transform
-          yield node.addEvent({ type: "agent-stream", path, part: { type: "text-delta", text: item.text } as TextStreamPart<ToolSet> })
-        } else if (item.type === "widget-delta") {
-          yield node.addEvent({ type: "widget-delta", path, index: item.index, widget: item.widget })
-        } else {
-          // yield agentNode.addEvent({ type: "agent-stream", path, part: item as TextStreamPart<ToolSet> })
-        }
+        path,
+        system: system ?? "",
+        model,
+        tools: baseTools,
+        widgets,
+        widgetsPickerModel,
+        providerOptions,
+        env,
+        memory,
+        context,
       }
 
-      // 11. Store LLM response messages in memory (tool events are now interleaved above)
-      const { messages: newMessages } = await result.response
-      for (const message of newMessages) {
-        await memory.store(message as ModelMessage)
+      // Execute step through middleware chain, yielding all events
+      const stepStream = wrappedStep(stepContext)
+      let stepResult: IteratorResult<RuntimeYield, FinishReason>
+
+      while (!(stepResult = await stepStream.next()).done) {
+        // Events already have path set, just add to node and yield
+        yield node.addEvent(stepResult.value)
       }
 
-      const finishReason = await result.finishReason
-
-      // 12. Emit step-end with messages added this step
+      // Get finish reason and appended messages for step-end event
+      const finishReason = stepResult.value
       const appendedMessages = await memory.appended()
 
-      yield node.addEvent({
-        type: "agent-step-end",
-        path,
-        step,
-        finishReason,
-        appended: appendedMessages,
-      })
+      // Emit step-end (outside middleware chain)
+      yield node.addEvent({ type: "agent-step-end", path, step, finishReason, appended: appendedMessages })
 
-      // 13. Check stop condition and break if met
+      // Check stop condition and break if met
       const shouldStop = await stopCondition({
         step,
         finishReason,

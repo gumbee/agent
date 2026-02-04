@@ -16,7 +16,7 @@ export { executeLoop } from "./runtime/run-loop"
 // =============================================================================
 
 export { createAgentNode, createToolNode, createRootNode } from "./runtime/graph/node"
-export { getCurrentNode, runWithNode, getPath, wrapGeneratorWithNode, getMiddlewares, runWithMiddlewares } from "./runtime/graph/context"
+export { getCurrentNode, runWithNode, getPath, wrapGeneratorWithNode, wrapGeneratorWithMiddlewares, getMiddlewares, runWithMiddlewares } from "./runtime/graph/context"
 export type { AgentExecutionNode, ToolExecutionNode, RootExecutionNode, ExecutionNode, NodeStatus } from "./runtime/graph/types"
 export { isAgentNode, isToolNode, isRootNode } from "./runtime/graph/types"
 
@@ -54,6 +54,7 @@ export type {
   AgentBeginYield,
   AgentEndYield,
   AgentStepBeginYield,
+  AgentStepLLMCallYield,
   AgentStepEndYield,
   AgentErrorYield,
   AgentStreamYield,
@@ -82,14 +83,15 @@ export {
   isAgentBegin,
   isAgentEnd,
   isAgentStepBegin,
+  isAgentStepLLMCall,
   isAgentStepEnd,
   isAgentError,
   isAgentStream,
   isWidgetDelta,
 } from "./runtime/types"
 
-// Ref for mutable references (type + factory)
-export { createRef, type Ref } from "./runtime/types"
+// LazyPromise for externally resolvable promises
+export { LazyPromise } from "./runtime/types"
 
 // =============================================================================
 // Middlewares

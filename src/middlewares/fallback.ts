@@ -1,15 +1,16 @@
 /**
- * Retry middleware that falls back to a different model if the LLM call fails.
+ * Retry middleware that falls back to a different model if an LLM step fails.
  *
- * This middleware only retries when the LLM call fails before any stream events
- * are produced (e.g., network errors, rate limits, API errors). Once streaming
- * has started, errors propagate normally without retry.
+ * This middleware operates at the step level (handleAgentStep), allowing recovery
+ * from individual failing LLM calls without restarting the entire agent loop.
+ * It only retries when the LLM call fails before any content has been produced
+ * (text-delta or reasoning events). Once actual content starts streaming,
+ * errors propagate normally without retry to avoid inconsistent output.
  */
 
 import type { JSONValue, LanguageModel } from "ai"
-import type { AgentExecutionNode } from "../runtime/graph/types"
-import type { AgentMiddlewareContext, AgentMiddlewareResult, Middleware } from "../runtime/middleware"
-import { type AgentLoopContext, createRef, type RuntimeYield } from "../runtime/types"
+import type { AgentStepMiddlewareContext, AgentStepMiddlewareResult, Middleware } from "../runtime/middleware"
+import type { AgentStreamYield } from "../runtime/types"
 
 export type FallbackMiddlewareOptions = {
   /** Fallback model to use on failure */
@@ -23,11 +24,12 @@ export type FallbackMiddlewareOptions = {
 }
 
 /**
- * Creates a fallback middleware that retries with a different model on failure.
+ * Creates a fallback middleware that retries individual LLM steps with a different model on failure.
  *
- * The middleware attempts to get the first event from the stream. If an error
- * is thrown before any events are produced, it retries with the fallback model.
- * Once streaming has started successfully, errors propagate normally.
+ * The middleware intercepts each step in the agent loop. When a step fails before producing
+ * any content (text-delta or reasoning events), it retries that specific step with the fallback
+ * model. Once content starts streaming, errors propagate without retry. This allows graceful
+ * recovery from transient failures without producing inconsistent output.
  *
  * @example
  * ```typescript
@@ -48,8 +50,9 @@ export type FallbackMiddlewareOptions = {
  *   console.log(event)
  * }
  *
- * // After stream consumed, node and context reflect the successful attempt
- * console.log(context.model) // The model that succeeded
+ * // After stream consumed, node and context are available as promises
+ * const nodeResult = await node
+ * const contextResult = await context
  * ```
  *
  * @example Chain multiple fallbacks for cascading model failover:
@@ -65,66 +68,65 @@ export function fallback<Context = any>(options: FallbackMiddlewareOptions): Mid
   const { model, providerOptions, maxRetries = 1, shouldRetry: shouldRetryFn = () => true } = options
 
   return {
-    handleAgent(
-      c: AgentMiddlewareContext<Context>,
-      next: (c: AgentMiddlewareContext<Context>) => AgentMiddlewareResult<Context>,
-    ): AgentMiddlewareResult<Context> {
-      // Mutable refs that we update on each attempt
-      // Initialize with placeholder values - will be set during stream consumption
-      const context = createRef<AgentLoopContext<Context>>(c)
-      const node = createRef<AgentExecutionNode>(null as unknown as AgentExecutionNode)
+    async *handleAgentStep(
+      c: AgentStepMiddlewareContext<Context>,
+      next: (c: AgentStepMiddlewareContext<Context>) => AgentStepMiddlewareResult,
+    ): AgentStepMiddlewareResult {
+      let attempt = 0
 
-      // Create a stream that handles retry logic
-      const stream = (async function* (): AsyncGenerator<RuntimeYield, void, unknown> {
-        let attempt = 0
+      while (attempt <= maxRetries) {
+        // Swap to fallback model (and optionally provider options) on retry attempts
+        const ctx = attempt > 0 ? { ...c, model, ...(providerOptions && { providerOptions }) } : c
 
-        while (attempt <= maxRetries) {
-          // Swap to fallback model (and optionally provider options) on retry attempts
-          const ctx = attempt > 0 ? { ...c, model, ...(providerOptions && { providerOptions }) } : c
+        // Track whether content has been produced (text-delta or reasoning-delta)
+        let hasProducedContent = false
 
-          // Get result from next middleware/base
-          const result = next(ctx)
+        try {
+          const stream = next(ctx)
 
-          // Update refs to point to this attempt's values
-          context.set(result.context.current)
-          node.set(result.node.current)
+          // Manually iterate to capture return value (for await...of discards it)
+          let result = await stream.next()
+          while (!result.done) {
+            const event = result.value
 
-          try {
-            // Try to get the first event - this is where LLM call errors surface
-            const firstEvent = await result.stream.next()
+            // Check if this event contains actual content
+            if (event.type === "agent-stream") {
+              const part = (event as AgentStreamYield).part
 
-            if (firstEvent.done) {
-              // Stream completed without yielding anything
-              return
+              if (part.type === "text-delta" || part.type === "reasoning-delta") {
+                hasProducedContent = true
+              }
             }
 
-            // First event received successfully - yield it and continue streaming
-            yield firstEvent.value
+            yield event
+            result = await stream.next()
+          }
 
-            // Continue yielding remaining events (no retry from here)
-            for await (const event of result.stream) {
-              yield event
-            }
+          // Stream completed successfully - return the finish reason
+          return result.value
+        } catch (error) {
+          console.error("Fallback middleware error:", error)
 
-            // Stream completed successfully
-            return
-          } catch (error) {
-            // Error before first event - check if we should retry
-            const err = error instanceof Error ? error : new Error(String(error))
-
-            if (attempt < maxRetries && shouldRetryFn(err, attempt + 1)) {
-              // Retry with fallback model
-              attempt++
-              continue
-            }
-
-            // No more retries - rethrow
+          // Only retry if no content has been produced yet
+          if (hasProducedContent) {
             throw error
           }
-        }
-      })()
 
-      return { context, stream, node }
+          const err = error instanceof Error ? error : new Error(String(error))
+
+          if (attempt < maxRetries && shouldRetryFn(err, attempt + 1)) {
+            // Retry with fallback model
+            attempt++
+            continue
+          }
+
+          // No more retries - rethrow
+          throw error
+        }
+      }
+
+      // This should never be reached, but TypeScript needs it
+      throw new Error("Fallback middleware exhausted all retries")
     },
 
     // Default: don't descend into subagents or tools

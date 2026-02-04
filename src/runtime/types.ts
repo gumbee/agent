@@ -59,8 +59,13 @@ export type AgentEndYield = BaseYield & { type: "agent-end" }
 export type AgentStepBeginYield = BaseYield & {
   type: "agent-step-begin"
   step: number
+}
+export type AgentStepLLMCallYield = BaseYield & {
+  type: "agent-step-llm-call"
   system: string
   messages: ModelMessage[]
+  modelId: string
+  provider: string
 }
 export type AgentStepEndYield = BaseYield & {
   type: "agent-step-end"
@@ -82,6 +87,7 @@ export type AgentYield =
   | AgentBeginYield
   | AgentEndYield
   | AgentStepBeginYield
+  | AgentStepLLMCallYield
   | AgentStepEndYield
   | AgentErrorYield
   | AgentStreamYield
@@ -125,90 +131,38 @@ export type Tool<Context = any, Input = any, Output = any, CustomYields = never>
 }
 
 // =============================================================================
-// Ref (Mutable Reference with Proxy)
+// LazyPromise (Externally Resolvable Promise)
 // =============================================================================
 
 /**
- * A mutable reference that proxies property access to the current value.
- *
- * This allows direct property access (e.g., `ref.status`) while also supporting
- * `ref.current` to get the full object and `ref.set(value)` to update it.
- *
- * Used for values that may change during async stream consumption (e.g., retry
- * middleware updating the node/context after switching to a fallback model).
- */
-export type Ref<T extends object> = T & {
-  /** The current referenced value */
-  readonly current: T
-  /** Update the referenced value */
-  set(value: T): void
-}
-
-/**
- * Creates a mutable reference that proxies property access to the current value.
+ * A promise that can be resolved or rejected from outside.
+ * Useful for bridging async generators with promise-based APIs.
  *
  * @example
  * ```typescript
- * const node = createRef(initialNode)
+ * const lazy = new LazyPromise<string>()
  *
- * // Direct property access (proxied to current)
- * console.log(node.status)  // same as node.current.status
+ * // Later, resolve it
+ * lazy.resolve("done")
  *
- * // Update the reference
- * node.set(newNode)
- *
- * // Access full object
- * console.log(node.current)
+ * // Consumers await it like a normal promise
+ * const value = await lazy // "done"
  * ```
  */
-export function createRef<T extends object>(initial: T): Ref<T> {
-  let _current = initial
+export class LazyPromise<T> extends Promise<T> {
+  resolve!: (value: T | PromiseLike<T>) => void
+  reject!: (reason?: unknown) => void
 
-  const handler: ProxyHandler<object> = {
-    get(_, prop) {
-      if (prop === "current") return _current
-      if (prop === "set")
-        return (value: T) => {
-          _current = value
-        }
-      // Forward to current value
-      const value = (_current as Record<string | symbol, unknown>)[prop]
-      // If it's a function, bind it to current so `this` works correctly
-      if (typeof value === "function") {
-        return (value as (...args: unknown[]) => unknown).bind(_current)
-      }
-      return value
-    },
-    set(_, prop, value) {
-      // Don't allow setting current or set directly
-      if (prop === "current" || prop === "set") return false
-      ;(_current as Record<string | symbol, unknown>)[prop] = value
-      return true
-    },
-    has(_, prop) {
-      return prop === "current" || prop === "set" || prop in _current
-    },
-    ownKeys() {
-      return [...Reflect.ownKeys(_current), "current", "set"]
-    },
-    getOwnPropertyDescriptor(_, prop) {
-      if (prop === "current") {
-        return { configurable: true, enumerable: false, value: _current }
-      }
-      if (prop === "set") {
-        return {
-          configurable: true,
-          enumerable: false,
-          value: (v: T) => {
-            _current = v
-          },
-        }
-      }
-      return Object.getOwnPropertyDescriptor(_current, prop)
-    },
+  constructor() {
+    let resolve!: (value: T | PromiseLike<T>) => void
+    let reject!: (reason?: unknown) => void
+    super((res, rej) => {
+      resolve = res
+      reject = rej
+    })
+    this.resolve = resolve
+    this.reject = reject
   }
-
-  return new Proxy({}, handler) as Ref<T>
 }
 
 // Note: Middleware class and related types are now in ./middleware.ts
@@ -224,12 +178,13 @@ export type StopConditionInfo = {
 }
 
 export type StopCondition = (info: StopConditionInfo) => boolean | Promise<boolean>
+export type SystemPrompt<Context = {}> = string | ((context: Context) => Promise<string> | string)
 
 export type AgentConfig<Context = {}> = {
   name: string
   description: string
   /** System prompt - can be string or function of context */
-  system?: string | ((context: Context) => string)
+  system?: SystemPrompt<Context>
   /** Instructions for when agent is used as a sub-agent (not used if root) */
   instructions?: string
   model: LanguageModel
@@ -263,8 +218,6 @@ export type AgentRunOptions<Context = any> = {
 export type AgentLoopContext<Context> = {
   /** system prompt */
   system?: AgentConfig<Context>["system"]
-  /** loop prompt */
-  prompt: UserModelMessage | string
   /** Memory */
   memory: Memory
   /** Application level context */
@@ -284,7 +237,7 @@ export type AgentLoopContext<Context> = {
 /**
  * Agent result containing stream, memory, and execution graph references.
  *
- * Note: `node` and `context` are getters that read from internal mutable refs.
+ * Note: `node` and `context` are promises that resolve when the stream is fully consumed.
  * If using retry middleware, these values reflect the successful attempt after
  * stream consumption completes.
  *
@@ -294,9 +247,12 @@ export type AgentLoopContext<Context> = {
  *
  * for await (const event of result.stream) { ... }
  *
- * // Access node and context (reflects successful attempt after stream consumed)
- * console.log(result.node.status)
- * console.log(result.context.model)
+ * // Access node and context (resolves after stream consumed)
+ * const node = await result.node
+ * console.log(node.status)
+ *
+ * const context = await result.context
+ * console.log(context.model)
  * ```
  */
 export type AgentResult<Context = any> = {
@@ -306,10 +262,10 @@ export type AgentResult<Context = any> = {
   memory: Memory
   /** Execution graph (root node if top-level, or existing parent if sub-agent) */
   graph: ExecutionNode
-  /** This agent's execution node (reflects successful attempt after stream consumed) */
-  readonly node: AgentExecutionNode
-  /** The loop context used (reflects successful attempt's context, including model) */
-  readonly context: AgentLoopContext<Context>
+  /** This agent's execution node (resolves after stream consumed) */
+  node: Promise<AgentExecutionNode>
+  /** The loop context used (resolves after stream consumed, reflects successful attempt's context) */
+  context: Promise<AgentLoopContext<Context>>
 }
 
 export type Agent<Context = {}> = Runner<Context, string, RuntimeYield, { response: string }> & {
@@ -346,6 +302,10 @@ export function isAgentStepBegin(event: RuntimeYield): event is AgentStepBeginYi
 
 export function isAgentStepEnd(event: RuntimeYield): event is AgentStepEndYield {
   return event.type === "agent-step-end"
+}
+
+export function isAgentStepLLMCall(event: RuntimeYield): event is AgentStepLLMCallYield {
+  return event.type === "agent-step-llm-call"
 }
 
 export function isAgentError(event: RuntimeYield): event is AgentErrorYield {

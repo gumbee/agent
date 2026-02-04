@@ -7,19 +7,21 @@
 
 import type { UserModelMessage } from "ai"
 import { SimpleMemory } from "../memory/simple"
-import { getCurrentNode, getMiddlewares, runWithMiddlewares, runWithNode, wrapGeneratorWithNode } from "./graph/context"
+import { getCurrentNode, getMiddlewares, runWithNode, wrapGeneratorWithNode, wrapGeneratorWithMiddlewares } from "./graph/context"
 import { createAgentNode, createRootNode } from "./graph/node"
 import type { AgentMiddlewareResult } from "./middleware"
 import { executeLoop } from "./run-loop"
 import { DEFAULT_STOP_CONDITION } from "./stop-conditions"
+import type { AgentExecutionNode } from "./graph/types"
 import {
   type Agent,
   type AgentConfig,
   type AgentLoopContext,
   type AgentResult,
   type AgentRunOptions,
-  createRef,
+  LazyPromise,
   type RunnerEnvironment,
+  type RuntimeYield,
 } from "./types"
 
 /**
@@ -102,7 +104,6 @@ export const agent = <Context = {}>(config: AgentConfig<Context>): Agent<Context
         context,
         env,
         memory,
-        prompt,
         stopCondition,
         model: config.model,
         providerOptions: config.providerOptions,
@@ -120,9 +121,9 @@ export const agent = <Context = {}>(config: AgentConfig<Context>): Agent<Context
       const ownMiddlewares = [...(config.middleware ?? []), ...(options.middleware ?? [])]
       const allMiddlewares = [...inheritedMiddlewares, ...ownMiddlewares]
 
-      // 6. Base function: creates agent node and wraps executeLoop
+      // 6. Base function: creates agent node and returns an async generator
       // This runs inside the graph context, so getCurrentNode() returns the graph/root
-      const base = (ctx: AgentLoopContext<Context>): AgentMiddlewareResult<Context> => {
+      async function* base(ctx: AgentLoopContext<Context>): AgentMiddlewareResult<Context> {
         // Create agent node as child of current node (graph/root or existing parent)
         const parent = getCurrentNode() ?? null
         const agentNode = createAgentNode(config.name, promptStr, parent)
@@ -135,39 +136,55 @@ export const agent = <Context = {}>(config: AgentConfig<Context>): Agent<Context
         // This is necessary because async generators are lazily evaluated
         const stream = wrapGeneratorWithNode(agentNode, executeLoop(nodeCtx))
 
-        return {
-          context: createRef(nodeCtx),
-          stream,
-          node: createRef(agentNode),
-        }
+        // Yield all events from the stream
+        yield* stream
+
+        // Return the final node and context
+        return { node: agentNode, context: nodeCtx }
       }
 
       // 7. Compose middleware using handleAgent (reduceRight so first middleware wraps outermost)
-      const wrappedRun = allMiddlewares.reduceRight<typeof base>(
-        (next, mw) => (c) => (mw.handleAgent ? mw.handleAgent(c, next) : next(c)),
-        base,
-      )
+      const wrappedRun = allMiddlewares.reduceRight<typeof base>((next, mw) => (c) => (mw.handleAgent ? mw.handleAgent(c, next) : next(c)), base)
 
-      // 8. Execute within middleware context and graph context
+      // 8. Wrapper that stores user message ONCE before middleware chain runs
+      // This prevents duplicate messages when middleware (e.g., fallback) retries
+      async function* withUserMessage(stream: AgentMiddlewareResult<Context>): AgentMiddlewareResult<Context> {
+        const userMessage: UserModelMessage = typeof prompt === "string" ? { role: "user", content: prompt } : prompt
+        await memory.store(userMessage)
+        return yield* stream
+      }
+
+      // 9. Execute within middleware context and graph context
       // The allMiddlewares are now the "active middlewares" for this agent's subtree
       // Tools and subagents will read from this context via getMiddlewares()
-      const result = runWithMiddlewares(allMiddlewares, () => runWithNode(graph, () => wrappedRun(loopContext)))
+      // We must wrap the generator with wrapGeneratorWithMiddlewares to ensure the
+      // middleware context is maintained during lazy generator iteration.
+      const baseStream = runWithNode(graph, () => wrappedRun(loopContext))
+      const contextWrappedStream = wrapGeneratorWithMiddlewares(allMiddlewares, baseStream)
+      const middlewareStream = withUserMessage(contextWrappedStream)
 
-      // 9. Return graph with getters for node/context that read from internal refs
-      // Middleware can update the refs during stream consumption (e.g., retry middleware)
-      // but consumers see clean types without the Ref wrapper
+      // 10. Create lazy promises for node and context that resolve when stream completes
+      const nodePromise = new LazyPromise<AgentExecutionNode>()
+      const contextPromise = new LazyPromise<AgentLoopContext<Context>>()
+
+      // 11. Wrap the middleware stream to resolve promises on completion
+      const consumerStream: AsyncGenerator<RuntimeYield, void, unknown> = (async function* () {
+        let result: IteratorResult<RuntimeYield, { node: AgentExecutionNode; context: AgentLoopContext<Context> }>
+        while (!(result = await middlewareStream.next()).done) {
+          yield result.value
+        }
+        // Stream completed - resolve the lazy promises with return values
+        nodePromise.resolve(result.value.node)
+        contextPromise.resolve(result.value.context)
+      })()
+
+      // 12. Return graph with promises for node/context
       return {
-        stream: result.stream,
+        stream: consumerStream,
         graph,
-        get memory() {
-          return result.context.current.memory
-        },
-        get node() {
-          return result.node.current
-        },
-        get context() {
-          return result.context.current
-        },
+        memory,
+        node: nodePromise,
+        context: contextPromise,
       }
     },
   }
