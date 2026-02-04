@@ -68,7 +68,7 @@ export const tool = <Context = {}, TSchema extends z.ZodSchema = z.ZodSchema<any
 
         const toolCallId = node.id
 
-        yield node.addEvent({ type: "tool-begin", path, tool: config.name, toolCallId, input: ctx.input })
+        yield node.addEvent({ type: "tool-begin", path, timestamp: performance.now(), tool: config.name, toolCallId, input: ctx.input })
 
         try {
           // Execute the tool - handle both async generators and plain async functions
@@ -90,6 +90,7 @@ export const tool = <Context = {}, TSchema extends z.ZodSchema = z.ZodSchema<any
               yield node.addEvent({
                 type: "tool-progress",
                 path,
+                timestamp: performance.now(),
                 tool: config.name,
                 toolCallId,
                 event: iterResult.value,
@@ -103,12 +104,12 @@ export const tool = <Context = {}, TSchema extends z.ZodSchema = z.ZodSchema<any
           node.setOutput(result)
           node.setStatus("completed")
 
-          yield node.addEvent({ type: "tool-end", path, tool: config.name, toolCallId, output: result })
+          yield node.addEvent({ type: "tool-end", path, timestamp: performance.now(), tool: config.name, toolCallId, output: result })
 
           return result
         } catch (error) {
           console.error(`[tool:${config.name}] Error:`, error)
-          yield node.addEvent({ type: "tool-error", path, tool: config.name, toolCallId, error: error as Error })
+          yield node.addEvent({ type: "tool-error", path, timestamp: performance.now(), tool: config.name, toolCallId, error: error as Error })
 
           node.setError(error as Error)
           node.setStatus("failed")

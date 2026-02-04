@@ -97,6 +97,9 @@ function buildAgentNode(init: AgentNodeInit): AgentExecutionNode {
       children.push(child)
     },
     addEvent(event) {
+      if (!("timestamp" in event) || event.timestamp === undefined) {
+        (event as any).timestamp = performance.now()
+      }
       events.push(event)
       return event
     },
@@ -169,6 +172,9 @@ function buildToolNode(init: ToolNodeInit): ToolExecutionNode {
       children.push(child)
     },
     addEvent(event) {
+      if (!("timestamp" in event) || event.timestamp === undefined) {
+        (event as any).timestamp = performance.now()
+      }
       events.push(event)
       return event
     },
@@ -236,6 +242,9 @@ function buildRootNode(init: RootNodeInit): RootExecutionNode {
       children.push(child)
     },
     addEvent(event) {
+      if (!("timestamp" in event) || event.timestamp === undefined) {
+        (event as any).timestamp = performance.now()
+      }
       events.push(event)
       return event
     },

@@ -44,7 +44,7 @@ export type Runner<Context = any, Input = any, Yields = any, Return = any> = {
 // Yield Types (events emitted during execution)
 // =============================================================================
 
-export type BaseYield = { path: string[] }
+export type BaseYield = { path: string[]; timestamp: number }
 
 // Tool yields
 export type ToolBeginYield = BaseYield & { type: "tool-begin"; tool: string; toolCallId: string; input?: unknown }

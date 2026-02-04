@@ -64,6 +64,7 @@ async function* executeStep<Context>(c: AgentStepMiddlewareContext<Context>): Ag
   yield {
     type: "agent-step-llm-call",
     path,
+    timestamp: performance.now(),
     system: fullSystemPrompt,
     messages,
     modelId,
@@ -104,10 +105,10 @@ async function* executeStep<Context>(c: AgentStepMiddlewareContext<Context>): Ag
       yield item
     } else if (item.type === "text-delta") {
       // Yield text delta as agent-stream event with path
-      yield { type: "agent-stream", path, part: { type: "text-delta", text: item.text } as TextStreamPart<ToolSet> }
+      yield { type: "agent-stream", path, timestamp: performance.now(), part: { type: "text-delta", text: item.text } as TextStreamPart<ToolSet> }
     } else if (item.type === "widget-delta") {
       // Yield widget delta with path
-      yield { type: "widget-delta", path, index: item.index, widget: item.widget }
+      yield { type: "widget-delta", path, timestamp: performance.now(), index: item.index, widget: item.widget }
     }
   }
 
@@ -141,7 +142,7 @@ export async function* executeLoop<Context>(data: AgentLoopContext<Context>): As
 
   node.setStatus("running")
 
-  yield node.addEvent({ type: "agent-begin", path })
+  yield node.addEvent({ type: "agent-begin", path, timestamp: performance.now() })
 
   try {
     // === INITIALIZATION ===
@@ -163,7 +164,7 @@ export async function* executeLoop<Context>(data: AgentLoopContext<Context>): As
       }
 
       // Emit step-begin (outside middleware chain)
-      yield node.addEvent({ type: "agent-step-begin", path, step })
+      yield node.addEvent({ type: "agent-step-begin", path, timestamp: performance.now(), step })
 
       // Build step context for middleware chain (step and path are readonly, not modifiable by middleware)
       // Note: executeStep builds system prompt, reads messages from memory, adds widget tool, and stores messages
@@ -195,7 +196,7 @@ export async function* executeLoop<Context>(data: AgentLoopContext<Context>): As
       const appendedMessages = await memory.appended()
 
       // Emit step-end (outside middleware chain)
-      yield node.addEvent({ type: "agent-step-end", path, step, finishReason, appended: appendedMessages })
+      yield node.addEvent({ type: "agent-step-end", path, timestamp: performance.now(), step, finishReason, appended: appendedMessages })
 
       // Check stop condition and break if met
       const shouldStop = await stopCondition({
@@ -209,12 +210,12 @@ export async function* executeLoop<Context>(data: AgentLoopContext<Context>): As
       }
     }
 
-    yield node.addEvent({ type: "agent-end", path })
+    yield node.addEvent({ type: "agent-end", path, timestamp: performance.now() })
 
     node.setStatus("completed")
     node.setMessages(await memory.read())
   } catch (error) {
-    yield node.addEvent({ type: "agent-error", path, error: error as Error })
+    yield node.addEvent({ type: "agent-error", path, timestamp: performance.now(), error: error as Error })
 
     node.setError(error as Error)
     node.setStatus("failed")
