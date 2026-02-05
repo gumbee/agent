@@ -1,5 +1,12 @@
 # @gumbee/agent
 
+<div align="left">
+
+[![npm version](https://img.shields.io/npm/v/@gumbee/agent.svg)](https://www.npmjs.com/package/@gumbee/agent)
+[![License](https://img.shields.io/npm/l/@gumbee/agent.svg)](package.json)
+
+</div>
+
 A powerful, composable agent framework built on the [Vercel AI SDK](https://sdk.vercel.ai/).
 
 ## Features
