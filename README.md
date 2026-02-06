@@ -18,6 +18,8 @@ Related Documentation
 [Tools](docs/tools.md) •
 [Memory](docs/memory.md) •
 [Stop Conditions](docs/stop-conditions.md) •
+[Context](docs/context.md) •
+[Middleware](docs/middleware.md) •
 [Tracing](docs/tracing.md)
 
 </div>
