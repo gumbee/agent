@@ -17,7 +17,7 @@ All handlers are optional. If a handler is not provided, the middleware simply p
 ```mermaid
 graph TD
     subgraph "Agent Execution (handleAgent)"
-        Start[agent.run()] --> MiddlewareAgent[Middleware]
+        Start["agent.run()"] --> MiddlewareAgent[Middleware]
         MiddlewareAgent --> Loop[Agent Loop]
 
         subgraph "Step Execution (handleAgentStep)"
