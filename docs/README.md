@@ -8,6 +8,8 @@ A powerful agent framework with built-in middleware, execution graphs, and rich 
 - **[Tools](./tools.md)** - Defining typed tools, using instructions, and async generators
 - **[Memory](./memory.md)** - Managing conversation history and custom memory strategies
 - **[Stop Conditions](./stop-conditions.md)** - Controlling when the agent loop terminates
+- **[Context](./context.md)** - Application context, dynamic system prompts, and per-request data
+- **[Middleware](./middleware.md)** - Composable middleware for logging, fallbacks, caching, and more
 - **[Tracing](./tracing.md)** - Execution graph tracking for debugging and persistence
 
 ## Quick Start

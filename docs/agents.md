@@ -273,7 +273,7 @@ For full documentation on stop conditions, including all built-in conditions, co
 
 ## Middleware
 
-Middleware wraps agent and tool execution:
+Middleware wraps agent and tool execution. For full documentation on middleware, including all handler types, propagation, and custom middleware, see [Middleware](./middleware.md).
 
 ```typescript
 import { Middleware, fallback } from "@gumbee/agent"
@@ -284,24 +284,23 @@ const myAgent = agent({
   description: "An assistant with fallback",
   model: openai("gpt-4o"),
   middleware: [
-    fallback({
-      model: google("gemini-2.0-flash"),
-      maxRetries: 2,
-      shouldRetry: (error) => error.message.includes("rate limit"),
-    }),
+    // fallback to anthropic if gemini flash fails a step
+    fallback({ model: anthropic("claude-sonnet-4-20250514") }),
+    // fallback to gemini flash model if gpt-4o fails a step
+    fallback({ model: google("gemini-2.5-flash") }),
   ],
 })
 
 // Or add middleware at runtime
 const { stream } = myAgent.run(prompt, context, {
-  middleware: [loggingMiddleware()],
+  middleware: [logging()],
 })
 ```
 
 ### Custom Middleware
 
 ```typescript
-function loggingMiddleware(): Middleware {
+function logging(): Middleware {
   return {
     handleAgent(c, next) {
       console.log("Agent starting:", c.prompt)
