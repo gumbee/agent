@@ -16,7 +16,15 @@ export { executeLoop } from "./runtime/run-loop"
 // =============================================================================
 
 export { createAgentNode, createToolNode, createRootNode } from "./runtime/graph/node"
-export { getCurrentNode, runWithNode, getPath, wrapGeneratorWithNode, wrapGeneratorWithMiddlewares, getMiddlewares, runWithMiddlewares } from "./runtime/graph/context"
+export {
+  getCurrentNode,
+  runWithNode,
+  getPath,
+  wrapGeneratorWithNode,
+  wrapGeneratorWithMiddlewares,
+  getMiddlewares,
+  runWithMiddlewares,
+} from "./runtime/graph/context"
 export type { AgentExecutionNode, ToolExecutionNode, RootExecutionNode, ExecutionNode, NodeStatus } from "./runtime/graph/types"
 export { isAgentNode, isToolNode, isRootNode } from "./runtime/graph/types"
 
@@ -103,7 +111,7 @@ export * from "./middlewares"
 // Stop Conditions
 // =============================================================================
 
-export { stopAfterSteps, stopOnFinish, stopOnToolCall, stopAny, stopAll, stopNever, DEFAULT_STOP_CONDITION } from "./runtime/stop-conditions"
+export { stopAfterSteps, stopOnFinish, stopOnToolCall, stopAny, stopAll, DEFAULT_STOP_CONDITION } from "./runtime/stop-conditions"
 
 // =============================================================================
 // Structured Output
@@ -120,4 +128,4 @@ export { isCompleted } from "@gumbee/structured/queries"
 // Utilities
 // =============================================================================
 
-export { estimateTokenCount } from "./utils/token-estimator"
+export { estimateTokenCount, estimateMessageTokens } from "./utils/token-estimator"

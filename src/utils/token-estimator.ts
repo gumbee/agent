@@ -1,3 +1,5 @@
+import type { ModelMessage } from "ai"
+
 const DEFAULT_CHARS_PER_TOKEN = 6
 
 const LANGUAGE_RULES = [
@@ -49,6 +51,68 @@ export function estimateTokenCount(text?: string): number {
     count += estimateSegment(segment)
   }
 
+  return count
+}
+
+/**
+ * Estimates the number of tokens in an AI SDK ModelMessage string using heuristic rules.
+ */
+export function estimateMessageTokens(message: ModelMessage): number {
+  if (typeof message.content === "string") {
+    return estimateTokenCount(message.content)
+  }
+
+  let count = 0
+  for (const part of message.content) {
+    switch (part.type) {
+      case "text":
+      case "reasoning":
+        count += estimateTokenCount(part.text)
+        break
+      case "tool-call":
+        count += estimateTokenCount(part.toolName)
+        count += estimateTokenCount(JSON.stringify(part.input))
+        break
+      case "tool-result": {
+        const output = part.output
+        if (!output) break
+
+        // Safer to switch on type
+        switch (output.type) {
+          case "text":
+          case "error-text":
+            count += estimateTokenCount(output.value)
+            break
+          case "json":
+          case "error-json":
+            count += estimateTokenCount(JSON.stringify(output.value))
+            break
+          case "execution-denied":
+            if (output.reason) count += estimateTokenCount(output.reason)
+            break
+          case "content":
+            for (const item of output.value) {
+              if (item.type === "text") {
+                count += estimateTokenCount(item.text)
+              } else {
+                count += 85 + 170 * 4 // assume 2*512px per axis and gpt 4o token overhead
+              }
+            }
+            break
+        }
+        break
+      }
+      case "image":
+      case "file":
+        count += 85 + 170 * 4 // assume 2*512px per axis and gpt 4o token overhead
+        break
+      default:
+        // Other parts (like image-data, file-data if they appear here)
+        // If it has 'text' property, count it?
+        // For now, assume binary/other overhead
+        count += 85 + 170 * 4 // assume 2*512px per axis and gpt 4o token overhead
+    }
+  }
   return count
 }
 

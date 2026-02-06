@@ -7,9 +7,6 @@ import { createWidgetSchemaTool } from "./tool-definitions/widget-schema-tool"
 import { transformWidgetStream } from "./widgets-transform"
 import type { RuntimeYield, Runner, AgentLoopContext, FinishReason } from "./types"
 
-/** Hard limit to prevent infinite loops if stop condition is misconfigured */
-const MAX_STEPS_HARD_LIMIT = 100
-
 /** Tool event types that can come from the event queue */
 const TOOL_EVENT_TYPES = new Set(["tool-begin", "tool-end", "tool-error", "tool-progress"])
 
@@ -157,7 +154,7 @@ export async function* executeLoop<Context>(data: AgentLoopContext<Context>): As
     let step = 0
 
     // === AGENTIC LOOP ===
-    for (step = 1; step <= MAX_STEPS_HARD_LIMIT; step++) {
+    while (true) {
       // Check abort signal
       if (env.abort?.aborted) {
         throw new Error("Agent execution was aborted")
@@ -208,6 +205,8 @@ export async function* executeLoop<Context>(data: AgentLoopContext<Context>): As
       if (shouldStop) {
         break
       }
+
+      step++
     }
 
     yield node.addEvent({ type: "agent-end", path, timestamp: performance.now() })

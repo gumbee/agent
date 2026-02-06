@@ -242,33 +242,39 @@ const myAgent = agent({
 
 ### Sliding Window Memory
 
-Keep only the most recent N messages:
+Keep only the most recent N messages. The `SlidingWindowMemory` class is built-in and handles edge cases like keeping tool-call/tool-result pairs together.
 
 ```typescript
-import type { Memory, ModelMessage } from "@gumbee/agent"
+import { SlidingWindowMemory } from "@gumbee/agent"
 
-class SlidingWindowMemory implements Memory {
-  private messages: ModelMessage[] = []
-  private initialCount = 0
-  private windowSize: number
+// Keep last 30 messages
+const memory = new SlidingWindowMemory(previousMessages, { windowSize: 30 })
 
-  constructor(messages: ModelMessage[] = [], windowSize = 30) {
-    this.messages = [...messages]
-    this.initialCount = this.messages.length
-    this.windowSize = windowSize
-  }
+const myAgent = agent({
+  name: "assistant",
+  description: "An assistant",
+  model: openai("gpt-4o"),
+  memory: memory,
+})
+```
 
-  async read(): Promise<ModelMessage[]> {
-    // Always return only the most recent N messages
-    return this.messages.slice(-this.windowSize)
-  }
+### Token Window Memory
 
-  async store(message: ModelMessage): Promise<void> {
-    this.messages.push(message)
-  }
+Keep only the most recent messages that fit within a token limit. The `TokenWindowMemory` class uses a heuristic token estimator to keep the context window within the model's limits.
 
-  async appended(): Promise<ModelMessage[]> {
-    return this.messages.slice(this.initialCount)
-  }
-}
+```typescript
+import { TokenWindowMemory } from "@gumbee/agent"
+
+// Keep last ~128k tokens (default)
+const memory = new TokenWindowMemory(previousMessages)
+
+// Or specify a custom limit
+const smallMemory = new TokenWindowMemory(previousMessages, { maxTokens: 4096 })
+
+const myAgent = agent({
+  name: "assistant",
+  description: "An assistant",
+  model: openai("gpt-4o"),
+  memory: memory,
+})
 ```

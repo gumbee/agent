@@ -11,7 +11,7 @@ import type { StopCondition, StopConditionInfo } from "./types"
  * ```
  */
 export function stopAfterSteps(maxSteps: number): StopCondition {
-  return ({ step }: StopConditionInfo) => step >= maxSteps
+  return ({ step }: StopConditionInfo) => step >= maxSteps - 1
 }
 
 /**
@@ -30,9 +30,9 @@ export function stopOnFinish(): StopCondition {
 }
 
 /**
- * Default stop condition: stops after 10 steps OR when the model finishes.
+ * Default stop condition: stops after 30 steps OR when the model finishes.
  * This is the default behavior if no stopCondition is provided.
- * Equivalent to stopAny(stopAfterSteps(10), stopOnFinish())
+ * Equivalent to stopAny(stopAfterSteps(30), stopOnFinish())
  */
 export const DEFAULT_STOP_CONDITION: StopCondition = stopAny(stopAfterSteps(30), stopOnFinish())
 
@@ -62,28 +62,13 @@ export function stopAny(...conditions: StopCondition[]): StopCondition {
  * new MyAgent({
  *   stopCondition: stopAll(
  *     stopOnFinish(),
- *     ({ step }) => step >= 2  // Only stop if finished AND at least 2 steps
+ *     ({ step }) => step >= 1  // Only stop if finished AND at least 2 steps
  *   )
  * })
  * ```
  */
 export function stopAll(...conditions: StopCondition[]): StopCondition {
   return (info: StopConditionInfo) => conditions.every((cond) => cond(info))
-}
-
-/**
- * Never stop automatically based on finish reason.
- * Warning: Use with caution, combine with stopAfterSteps() to prevent infinite loops.
- *
- * @example
- * ```typescript
- * new MyAgent({
- *   stopCondition: stopAfterSteps(20)  // Only stops after 20 steps
- * })
- * ```
- */
-export function stopNever(): StopCondition {
-  return () => false
 }
 
 /**

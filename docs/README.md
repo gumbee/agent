@@ -4,7 +4,10 @@ A powerful agent framework with built-in middleware, execution graphs, and rich 
 
 ## Core Concepts
 
-- **[Agents](./agents.md)** - LLM-powered agents that can use tools and spawn subagents
+- **[Agents](./agents.md)** - Creating and running agents, configuration, and subagents
+- **[Tools](./tools.md)** - Defining typed tools, using instructions, and async generators
+- **[Memory](./memory.md)** - Managing conversation history and custom memory strategies
+- **[Stop Conditions](./stop-conditions.md)** - Controlling when the agent loop terminates
 - **[Tracing](./tracing.md)** - Execution graph tracking for debugging and persistence
 
 ## Quick Start

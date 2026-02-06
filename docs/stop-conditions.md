@@ -8,7 +8,7 @@ A stop condition is a function that receives information about the current step 
 
 ```typescript
 type StopConditionInfo = {
-  step: number // Current step number (1-based)
+  step: number // Current step number (0-based)
   finishReason: FinishReason // Why the LLM stopped generating
   messages: ModelMessage[] // All messages in memory
 }
@@ -31,8 +31,6 @@ const DEFAULT_STOP_CONDITION = stopAny(stopAfterSteps(30), stopOnFinish())
 
 This means the agent stops after 30 steps **or** when the model finishes without requesting tool calls -- whichever comes first.
 
-Additionally, there is a hard limit of 100 steps (`MAX_STEPS_HARD_LIMIT`) that cannot be overridden. This prevents infinite loops regardless of the stop condition.
-
 ## Built-in Stop Conditions
 
 ### `stopAfterSteps(maxSteps)`
@@ -50,7 +48,7 @@ const myAgent = agent({
 })
 ```
 
-The condition evaluates `step >= maxSteps`, so `stopAfterSteps(1)` means the agent will execute exactly one LLM call.
+The condition evaluates `step >= maxSteps - 1` (step is 0-based), so `stopAfterSteps(1)` means the agent will execute exactly one LLM call.
 
 ### `stopOnFinish()`
 
@@ -92,26 +90,6 @@ const myAgent = agent({
 
 The condition checks all messages in memory for an assistant message containing a tool call with the specified name.
 
-### `stopNever()`
-
-Never stops based on the stop condition. The agent will only stop when it hits the hard limit of 100 steps.
-
-**Warning:** Always combine `stopNever()` with `stopAfterSteps()` to prevent excessive usage:
-
-```typescript
-import { stopNever, stopAfterSteps, stopAny } from "@gumbee/agent"
-
-const myAgent = agent({
-  name: "worker",
-  description: "A persistent worker",
-  model: openai("gpt-4o"),
-  stopCondition: stopAny(
-    stopNever(), // Don't stop on finish
-    stopAfterSteps(20), // But do stop after 20 steps
-  ),
-})
-```
-
 ## Combinators
 
 Combine multiple stop conditions using logical operators.
@@ -148,7 +126,7 @@ const myAgent = agent({
   model: openai("gpt-4o"),
   stopCondition: stopAll(
     stopOnFinish(),
-    ({ step }) => step >= 2, // Only stop if finished AND at least 2 steps completed
+    ({ step }) => step >= 1, // Only stop if finished AND at least 2 steps completed
   ),
 })
 ```
@@ -171,11 +149,11 @@ const stopOnTooManyMessages: StopCondition = ({ messages }) => {
 
 ```typescript
 const customStop: StopCondition = ({ step, finishReason, messages }) => {
-  // Always stop after 20 steps
-  if (step >= 20) return true
+  // Always stop after 20 steps (step is 0-based, so step 19 = 20th step)
+  if (step >= 19) return true
 
-  // Stop on finish only after at least 3 steps
-  if (step >= 3 && finishReason !== "tool-calls") return true
+  // Stop on finish only after at least 3 steps (step 2 = 3rd step)
+  if (step >= 2 && finishReason !== "tool-calls") return true
 
   return false
 }
@@ -191,8 +169,8 @@ const asyncStop: StopCondition = async ({ step, messages }) => {
   const shouldStop = await checkExternalCondition()
   if (shouldStop) return true
 
-  // Fallback: stop after 15 steps
-  return step >= 15
+  // Fallback: stop after 15 steps (step is 0-based)
+  return step >= 14
 }
 ```
 
@@ -215,12 +193,11 @@ const myAgent = agent({
 
 ## Summary
 
-| Condition                    | Behavior                                    |
-| ---------------------------- | ------------------------------------------- |
-| `stopAfterSteps(n)`         | Stops when `step >= n`                      |
-| `stopOnFinish()`            | Stops when model finishes (no tool calls)   |
-| `stopOnToolCall(name)`      | Stops when the named tool has been called   |
-| `stopNever()`               | Never stops (use with step limit)           |
-| `stopAny(...conds)`         | Stops if any condition is true (OR)         |
-| `stopAll(...conds)`         | Stops if all conditions are true (AND)      |
-| `DEFAULT_STOP_CONDITION`    | `stopAny(stopAfterSteps(30), stopOnFinish())`|
+| Condition                | Behavior                                      |
+| ------------------------ | --------------------------------------------- |
+| `stopAfterSteps(n)`      | Stops after `n` steps (`step >= n - 1`)       |
+| `stopOnFinish()`         | Stops when model finishes (no tool calls)     |
+| `stopOnToolCall(name)`   | Stops when the named tool has been called     |
+| `stopAny(...conds)`      | Stops if any condition is true (OR)           |
+| `stopAll(...conds)`      | Stops if all conditions are true (AND)        |
+| `DEFAULT_STOP_CONDITION` | `stopAny(stopAfterSteps(30), stopOnFinish())` |
