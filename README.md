@@ -9,6 +9,19 @@
 
 A powerful, composable agent framework built on the [Vercel AI SDK](https://sdk.vercel.ai/).
 
+========================
+
+<div align="left">
+Related Documentation
+
+[Agents](docs/agents.md) •
+[Tools](docs/tools.md) •
+[Memory](docs/memory.md) •
+[Stop Conditions](docs/stop-conditions.md) •
+[Tracing](docs/tracing.md)
+
+</div>
+
 ## Features
 
 - **Hierarchical Agents** — Agents can use other agents as tools, enabling complex multi-agent workflows
@@ -58,11 +71,6 @@ for await (const event of stream) {
   }
 }
 ```
-
-## Documentation
-
-- [Agents](./docs/agents.md) — Creating and running agents
-- [Execution Graph](./docs/tracing.md) — Tracking and debugging executions
 
 ## Development
 

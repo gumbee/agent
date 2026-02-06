@@ -195,7 +195,7 @@ for await (const event of stream) {
 
 ## Tools
 
-Define tools with typed inputs and outputs:
+Define tools with typed inputs and outputs. Tools support an `instructions` field that is dynamically injected into the agent's system prompt at runtime.
 
 ```typescript
 import { tool, z } from "@gumbee/agent"
@@ -203,6 +203,7 @@ import { tool, z } from "@gumbee/agent"
 const weatherTool = tool({
   name: "get_weather",
   description: "Get current weather for a city",
+  instructions: "Use this tool when the user asks about weather. Always include the unit.",
   input: z.object({
     city: z.string().describe("City name"),
   }),
@@ -213,32 +214,7 @@ const weatherTool = tool({
 })
 ```
 
-### Async Generator Tools
-
-Tools can yield progress events:
-
-```typescript
-const processDataTool = tool({
-  name: "process_data",
-  description: "Process data with progress updates",
-  input: z.object({
-    data: z.string(),
-  }),
-  execute: async function* ({ data }, context) {
-    // Yield progress events (emitted as tool-progress)
-    yield { type: "progress", percent: 0 }
-
-    await processStep1(data)
-    yield { type: "progress", percent: 50 }
-
-    const result = await processStep2(data)
-    yield { type: "progress", percent: 100 }
-
-    // Return the final result
-    return { result }
-  },
-})
-```
+For full documentation on tools, including async generator tools with progress events, the `instructions` field, and tool context, see [Tools](./tools.md).
 
 ## Subagents
 
@@ -281,7 +257,7 @@ for await (const event of stream) {
 Control when the agent loop terminates:
 
 ```typescript
-import { stopAfterSteps, stopOnFinish, stopOnToolCall, stopAny, stopAll, stopNever, DEFAULT_STOP_CONDITION } from "@gumbee/agent"
+import { stopAfterSteps, stopOnFinish, stopOnToolCall, stopAny } from "@gumbee/agent"
 
 const myAgent = agent({
   // ...
@@ -293,19 +269,7 @@ const myAgent = agent({
 })
 ```
 
-### Custom Stop Conditions
-
-```typescript
-const customStop: StopCondition = ({ step, finishReason, messages }) => {
-  // Stop if we've used too many messages
-  if (messages.length > 50) return true
-
-  // Stop after certain steps if finished
-  if (step >= 2 && finishReason === "stop") return true
-
-  return false
-}
-```
+For full documentation on stop conditions, including all built-in conditions, combinators, defaults, and custom stop conditions, see [Stop Conditions](./stop-conditions.md).
 
 ## Middleware
 
@@ -381,7 +345,7 @@ const myAgent = agent({
 
 ## Memory
 
-Memory stores conversation history:
+Memory stores conversation history and tracks messages added during a run:
 
 ```typescript
 import { SimpleMemory } from "@gumbee/agent"
@@ -392,48 +356,46 @@ const memory = new SimpleMemory([
   { role: "assistant", content: [{ type: "text", text: "Hi there!" }] },
 ])
 
-// Use as default memory
 const myAgent = agent({
   // ...
   memory: memory,
 })
-
-// Or override per-run
-const { stream } = myAgent.run("Continue our conversation", context, {
-  memory: new SimpleMemory(previousMessages),
-})
 ```
 
-### Custom Memory
-
-Implement the `Memory` interface for custom storage:
-
-```typescript
-interface Memory {
-  read(): Promise<ModelMessage[]>
-  store(message: ModelMessage): void | Promise<void>
-  appended(): Promise<ModelMessage[]>
-}
-```
+For full documentation on memory, including the `Memory` interface, what `appended()` returns, and custom memory strategies (e.g., auto-summarizing memory), see [Memory](./memory.md).
 
 ## Widgets
 
-Enable rich UI responses with widgets:
+Enable rich UI responses with widgets. Widgets are registered using a `DescribeRegistry` and the `.add()` method, which takes a Zod schema and a metadata object:
 
 ```typescript
-import { DescribeRegistry } from "@gumbee/structured"
-import { agent, z } from "@gumbee/agent"
+import { DescribeRegistry, z } from "@gumbee/structured"
+import { agent } from "@gumbee/agent"
 
-// Create widget registry
+// Define widget schemas
+const ChartWidget = z.object({
+  type: z.literal("chart"),
+  data: z.array(z.number()),
+  title: z.string().optional().describe("Chart title"),
+})
+
+const SummaryWidget = z.object({
+  type: z.literal("summary"),
+  text: z.string().describe("The summary content. Supports markdown."),
+})
+
+// Create registry and add widgets using .add(schema, meta)
+// .add() returns `this` so calls can be chained
 const registry = new DescribeRegistry()
-
-// Register widget schemas
-registry.register(
-  z.object({
-    type: z.literal("chart"),
-    data: z.array(z.number()),
-  }),
-)
+  .add(ChartWidget, {
+    id: "Chart",
+    description: "Display a data chart with numeric values",
+  })
+  .add(SummaryWidget, {
+    id: "Summary",
+    description: "Display a summary card",
+    always: true, // Always include this widget in output
+  })
 
 // Use in agent
 const myAgent = agent({
@@ -445,9 +407,51 @@ const myAgent = agent({
 })
 
 // Stream widget updates
+const { stream } = myAgent.run("Show me the quarterly data")
+
 for await (const event of stream) {
   if (event.type === "widget-delta") {
     console.log(`Widget ${event.index}:`, event.widget)
   }
 }
+```
+
+### Widget Metadata Options
+
+The second argument to `.add()` is a `DescribeMeta` object:
+
+| Option         | Type       | Description                                                                                |
+| -------------- | ---------- | ------------------------------------------------------------------------------------------ |
+| `id`           | `string`   | Required unique identifier for the widget                                                  |
+| `description`  | `string`   | Human-readable description (helps the LLM pick widgets)                                    |
+| `aliases`      | `string[]` | Alternative names that can reference this widget                                           |
+| `always`       | `boolean`  | If true, always include this widget in typescript definition passed to LLM                 |
+| `utility`      | `boolean`  | If true, this is a utility type (referenced by others, but not used as top-level widget)   |
+| `dependencies` | `string[]` | list of widgets to always be included in typescript definition if this widget is included  |
+| `rules`        | `string`   | Additional rules/constraints for LLM prompts. Included as comment in typescript definition |
+
+### Utility Types
+
+You can register shared sub-schemas as utility types that are referenced by other widgets but not exported as top-level widget types:
+
+```typescript
+const Symptom = z.object({
+  name: z.string().describe("The symptom name"),
+  bodyPart: z.enum(["head", "chest", "abdomen", "limbs"]).describe("Affected area"),
+})
+
+const SymptomListWidget = z.object({
+  type: z.literal("symptom_list"),
+  symptoms: Symptom.array().describe("List of symptoms"),
+})
+
+const registry = new DescribeRegistry()
+  .add(Symptom, {
+    id: "Symptom",
+    utility: true, // Won't appear as a top-level widget type
+  })
+  .add(SymptomListWidget, {
+    id: "SymptomList",
+    description: "Display a list of symptoms with affected body areas",
+  })
 ```
