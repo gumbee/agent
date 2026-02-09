@@ -19,20 +19,23 @@ const myAgent = agent({
 
 ## Configuration Options
 
-| Option               | Type               | Description                                                    |
-| -------------------- | ------------------ | -------------------------------------------------------------- |
-| `name`               | `string`           | Required identifier for the agent                              |
-| `description`        | `string`           | Required description shown to parent agents when used as tool  |
-| `model`              | `LanguageModel`    | Required AI SDK language model to use                          |
-| `system`             | `string \| fn`     | System prompt (string or function receiving context)           |
-| `instructions`       | `string`           | Instructions used when agent runs as a subagent                |
-| `tools`              | `Runner[]`         | Optional array of tools or agents the agent can use            |
-| `memory`             | `Memory`           | Optional default memory implementation                         |
-| `middleware`         | `Middleware[]`     | Optional array of middleware                                   |
-| `stopCondition`      | `StopCondition`    | Optional condition for when to stop the agent loop             |
-| `widgets`            | `DescribeRegistry` | Optional registry for rich widget outputs                      |
-| `widgetsPickerModel` | `LanguageModel`    | Optional model for widget schema selection                     |
-| `providerOptions`    | `object`           | Optional provider-specific options (e.g., thinking, reasoning) |
+| Option               | Type               | Description                                                                                  |
+| -------------------- | ------------------ | -------------------------------------------------------------------------------------------- |
+| `name`               | `string`           | Required identifier for the agent                                                            |
+| `description`        | `string`           | Required description shown to parent agents when used as tool                                |
+| `model`              | `LanguageModel`    | Required AI SDK language model to use                                                        |
+| `system`             | `string \| fn`     | System prompt (string or function receiving context)                                         |
+| `instructions`       | `string`           | Instructions used when agent runs as a subagent                                              |
+| `input`              | `z.ZodSchema`      | Optional input schema for structured input when agent is used as a subagent                  |
+| `toPrompt`           | `fn`               | Maps structured input to a prompt. Required when `Input` is not `string \| UserModelMessage` |
+| `execute`            | `fn`               | Optional custom execution logic (receives `run`, `input`, `context`, `env`)                  |
+| `tools`              | `Runner[]`         | Optional array of tools or agents the agent can use                                          |
+| `memory`             | `Memory`           | Optional default memory implementation                                                       |
+| `middleware`         | `Middleware[]`     | Optional array of middleware                                                                  |
+| `stopCondition`      | `StopCondition`    | Optional condition for when to stop the agent loop                                           |
+| `widgets`            | `DescribeRegistry` | Optional registry for rich widget outputs                                                    |
+| `widgetsPickerModel` | `LanguageModel`    | Optional model for widget schema selection                                                   |
+| `providerOptions`    | `object`           | Optional provider-specific options (e.g., thinking, reasoning)                               |
 
 ## Running an Agent
 
@@ -75,7 +78,7 @@ const { stream } = myAgent.run("Find my orders", { userId: "123", apiKey: "xxx" 
 ```typescript
 const controller = new AbortController()
 
-const { stream, graph, node } = myAgent.run("Long running task", context, {
+const { stream, graph, context } = myAgent.run("Long running task", appContext, {
   memory: new SimpleMemory(previousMessages), // Override default memory
   abort: controller.signal, // Cancellation signal
   middleware: [loggingMiddleware], // Additional middleware
@@ -89,20 +92,25 @@ for await (const event of stream) {
   // ...
 }
 
-console.log(node.status) // "completed" | "failed"
+// Access the execution graph (populated after stream is consumed)
+const agentNode = graph.root?.children[0]
+console.log(agentNode?.status) // "completed" | "failed"
+
+// Access the loop context (resolves after stream is consumed)
+const ctx = await context
+console.log(ctx.model) // The model used
 ```
 
 ### Run Return Values
 
 The `run()` method returns:
 
-| Property  | Type                 | Description                            |
-| --------- | -------------------- | -------------------------------------- |
-| `stream`  | `AsyncGenerator`     | Stream of runtime events               |
-| `memory`  | `Memory`             | Memory instance used for this run      |
-| `graph`   | `RootExecutionNode`  | Root of the execution graph            |
-| `node`    | `AgentExecutionNode` | Getter for the agent's execution node  |
-| `context` | `AgentLoopContext`   | Getter for agent context (model, etc.) |
+| Property  | Type                       | Description                                                     |
+| --------- | -------------------------- | --------------------------------------------------------------- |
+| `stream`  | `AsyncGenerator`           | Stream of runtime events                                        |
+| `memory`  | `Memory`                   | Memory instance used for this run                               |
+| `graph`   | `ExecutionGraph`           | Execution graph, populated as the stream is consumed            |
+| `context` | `Promise<AgentLoopContext>` | Promise that resolves to the agent context after stream finishes |
 
 ## Event Types
 
@@ -123,6 +131,10 @@ for await (const event of stream) {
     // Step lifecycle
     case "agent-step-begin":
       console.log(`Step ${event.step} starting`)
+      break
+
+    case "agent-step-llm-call":
+      console.log(`LLM call: model=${event.modelId}, provider=${event.provider}`)
       break
 
     case "agent-step-end":
@@ -175,6 +187,7 @@ import {
   isAgentBegin,
   isAgentEnd,
   isAgentStepBegin,
+  isAgentStepLLMCall,
   isAgentStepEnd,
   isAgentStream,
   isToolBegin,
@@ -257,7 +270,7 @@ for await (const event of stream) {
 Control when the agent loop terminates:
 
 ```typescript
-import { stopAfterSteps, stopOnFinish, stopOnToolCall, stopAny } from "@gumbee/agent"
+import { stopAfterSteps, stopOnFinish, stopOnToolCall, stopAny, stopAll, DEFAULT_STOP_CONDITION } from "@gumbee/agent"
 
 const myAgent = agent({
   // ...
@@ -268,6 +281,12 @@ const myAgent = agent({
   ),
 })
 ```
+
+Available combinators:
+
+- `stopAny(...conditions)` -- stops if **any** condition returns true
+- `stopAll(...conditions)` -- stops only when **all** conditions return true
+- `DEFAULT_STOP_CONDITION` -- the default: `stopAny(stopAfterSteps(30), stopOnFinish())`
 
 For full documentation on stop conditions, including all built-in conditions, combinators, defaults, and custom stop conditions, see [Stop Conditions](./stop-conditions.md).
 
@@ -299,17 +318,24 @@ const { stream } = myAgent.run(prompt, context, {
 
 ### Custom Middleware
 
+Middleware handlers are async generators that use `yield*` to delegate to the next middleware in the chain:
+
 ```typescript
 function logging(): Middleware {
   return {
-    handleAgent(c, next) {
-      console.log("Agent starting:", c.prompt)
-      const result = next(c)
+    async *handleAgent(c, next) {
+      console.log("Agent starting:", c.input)
+      const result = yield* next(c)
+      console.log("Agent completed")
       return result
     },
-    handleTool(c, next) {
+    async *handleTool(c, next) {
       console.log("Tool starting:", c.tool.name)
-      return next(c)
+      return yield* next(c)
+    },
+    async *handleAgentStep(c, next) {
+      console.log(`Step ${c.step} using model:`, c.model.modelId)
+      return yield* next(c)
     },
     shouldDescendIntoAgent: (agent) => true, // Apply to sub-agents
     shouldDescendIntoTool: (tool) => true, // Apply to tools
@@ -344,16 +370,22 @@ const myAgent = agent({
 
 ## Memory
 
-Memory stores conversation history and tracks messages added during a run:
+Memory stores conversation history and tracks messages added during a run. Three built-in implementations are available:
 
 ```typescript
-import { SimpleMemory } from "@gumbee/agent"
+import { SimpleMemory, SlidingWindowMemory, TokenWindowMemory } from "@gumbee/agent"
 
-// Create with initial messages
+// Simple memory -- keeps all messages
 const memory = new SimpleMemory([
   { role: "user", content: [{ type: "text", text: "Hello" }] },
   { role: "assistant", content: [{ type: "text", text: "Hi there!" }] },
 ])
+
+// Sliding window -- keeps the last N messages (default: 30)
+const windowMemory = new SlidingWindowMemory([], { windowSize: 20 })
+
+// Token window -- keeps messages that fit within a token budget (default: 128000)
+const tokenMemory = new TokenWindowMemory([], { maxTokens: 64000 })
 
 const myAgent = agent({
   // ...

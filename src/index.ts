@@ -3,7 +3,7 @@
 // =============================================================================
 
 export { agent } from "./runtime/agent"
-export { tool, isTool, convertRunnersForAI, formatToolOutput } from "./runtime/tool"
+export { tool, isTool, isAgent, convertRunnersForAI, formatToolOutput } from "./runtime/tool"
 
 // =============================================================================
 // Run Loop
@@ -15,18 +15,20 @@ export { executeLoop } from "./runtime/run-loop"
 // Graph System
 // =============================================================================
 
-export { createAgentNode, createToolNode, createRootNode } from "./runtime/graph/node"
+export { createNode } from "./runtime/graph/node"
+export type { Node } from "./runtime/graph/types"
 export {
   getCurrentNode,
   runWithNode,
-  getPath,
   wrapGeneratorWithNode,
   wrapGeneratorWithMiddlewares,
   getMiddlewares,
   runWithMiddlewares,
 } from "./runtime/graph/context"
-export type { AgentExecutionNode, ToolExecutionNode, RootExecutionNode, ExecutionNode, NodeStatus } from "./runtime/graph/types"
-export { isAgentNode, isToolNode, isRootNode } from "./runtime/graph/types"
+
+// Execution Graph (event-driven graph builder)
+export { ExecutionGraph } from "./runtime/graph/execution-graph"
+export type { ExecutionGraphNode, ExecutionRootNode, ExecutionAgentNode, ExecutionToolNode, NodeStatus } from "./runtime/graph/execution-graph"
 
 // =============================================================================
 // Middleware System
@@ -81,6 +83,7 @@ export type {
   FinishReason,
   LanguageModel,
   UserModelMessage,
+  ThinkingConfig,
 } from "./runtime/types"
 
 // Type guards for yields

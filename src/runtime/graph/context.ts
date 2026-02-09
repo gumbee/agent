@@ -7,10 +7,10 @@
 
 import { AsyncLocalStorage } from "async_hooks"
 import type { Middleware } from "../middleware"
-import type { ExecutionNode } from "./types"
+import type { Node } from "./types"
 
 // Stores the current node in the execution context
-export const graphNodeStorage: AsyncLocalStorage<ExecutionNode> = new AsyncLocalStorage<ExecutionNode>()
+export const graphNodeStorage: AsyncLocalStorage<Node> = new AsyncLocalStorage<Node>()
 
 // Stores the active middlewares for the current subtree
 export const middlewareStorage: AsyncLocalStorage<Middleware[]> = new AsyncLocalStorage<Middleware[]>()
@@ -18,7 +18,7 @@ export const middlewareStorage: AsyncLocalStorage<Middleware[]> = new AsyncLocal
 /**
  * Get current node from context (undefined if not in graph execution)
  */
-export function getCurrentNode(): ExecutionNode | undefined {
+export function getCurrentNode(): Node | undefined {
   return graphNodeStorage.getStore()
 }
 
@@ -27,7 +27,7 @@ export function getCurrentNode(): ExecutionNode | undefined {
  * All code executed within fn (including async operations) will
  * see this node as the current node.
  */
-export function runWithNode<T>(node: ExecutionNode, fn: () => T): T {
+export function runWithNode<T>(node: Node, fn: () => T): T {
   return graphNodeStorage.run(node, fn)
 }
 
@@ -38,7 +38,7 @@ export function runWithNode<T>(node: ExecutionNode, fn: () => T): T {
  * the original runWithNode scope.
  */
 export async function* wrapGeneratorWithNode<T, TReturn>(
-  node: ExecutionNode,
+  node: Node,
   generator: AsyncGenerator<T, TReturn, unknown>,
 ): AsyncGenerator<T, TReturn, unknown> {
   try {
@@ -53,20 +53,6 @@ export async function* wrapGeneratorWithNode<T, TReturn>(
     // Ensure cleanup runs in context if generator is closed early
     await graphNodeStorage.run(node, () => generator.return(undefined as TReturn))
   }
-}
-
-/**
- * Build the execution path from root to the given node.
- * Returns an array of node names representing the call hierarchy.
- */
-export function getPath(node: ExecutionNode): string[] {
-  const path: string[] = []
-  let current: ExecutionNode | null = node
-  while (current) {
-    path.unshift(current.name)
-    current = current.parent
-  }
-  return path
 }
 
 // =============================================================================

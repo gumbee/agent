@@ -59,7 +59,7 @@ export function createWidgetSchemaTool(registry: DescribeRegistry, pickerModel: 
         }),
       )
 
-      console.log("Widget picker prompt", messagesToString(messages))
+      // console.log("Widget picker prompt", messagesToString(messages))
 
       const result = await structured({
         model: pickerModel,

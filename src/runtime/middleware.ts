@@ -13,7 +13,6 @@
 import type { DescribeRegistry } from "@gumbee/structured"
 import type { JSONValue, LanguageModel } from "ai"
 import type { Memory } from "../memory"
-import type { AgentExecutionNode } from "./graph/types"
 import type { Agent, AgentLoopContext, FinishReason, Runner, RunnerEnvironment, RuntimeYield, SystemPrompt, Tool, ToolYield } from "./types"
 
 // =============================================================================
@@ -31,13 +30,9 @@ export type AgentMiddlewareContext<Context = any> = Omit<AgentLoopContext<Contex
 
 /**
  * Result returned by handleAgent.
- * An async generator that yields events and returns the final node/context.
+ * An async generator that yields events and returns the final context.
  */
-export type AgentMiddlewareResult<Context = any> = AsyncGenerator<
-  RuntimeYield,
-  { node: AgentExecutionNode; context: AgentLoopContext<Context> },
-  void
->
+export type AgentMiddlewareResult<Context = any> = AsyncGenerator<RuntimeYield, { context: AgentLoopContext<Context> }, void>
 
 /**
  * Context provided to handleTool.
@@ -69,10 +64,14 @@ export type ToolMiddlewareResult<Output = unknown> = AsyncGenerator<ToolYield, O
 export type AgentStepMiddlewareContext<Context = any> = {
   /** Current step number (1-indexed, readonly) */
   readonly step: number
+  /** Node ID of the agent running this step (readonly) */
+  readonly nodeId: string
   /** Execution path for event attribution (readonly) */
   readonly path: string[]
   /** Runner environment (readonly - abort signal, toolCallId) */
   readonly env: RunnerEnvironment
+  /** The original input/prompt that triggered this agent */
+  readonly input: unknown
   /** System prompt for this step (includes base tool instructions, resolved in executeStep) */
   system: SystemPrompt<Context>
   /** The model to use for this step */

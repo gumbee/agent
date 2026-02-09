@@ -1,5 +1,5 @@
-import { type ModelMessage, streamText, type TextStreamPart, type ToolSet } from "ai"
-import { getCurrentNode, getMiddlewares, getPath } from "./graph/context"
+import { type ModelMessage, type UserModelMessage, streamText, type TextStreamPart, type ToolSet } from "ai"
+import { getCurrentNode, getMiddlewares } from "./graph/context"
 import { createAsyncEventQueue, mergeStreamWithQueue } from "./merge-streams"
 import type { AgentStepMiddlewareContext, AgentStepMiddlewareResult, Middleware } from "./middleware"
 import { convertRunnersForAI } from "./tool"
@@ -7,12 +7,9 @@ import { createWidgetSchemaTool } from "./tool-definitions/widget-schema-tool"
 import { transformWidgetStream } from "./widgets-transform"
 import type { RuntimeYield, Runner, AgentLoopContext, FinishReason } from "./types"
 
-/** Tool event types that can come from the event queue */
-const TOOL_EVENT_TYPES = new Set(["tool-begin", "tool-end", "tool-error", "tool-progress"])
-
-/** Check if an item is a tool event (from the event queue) vs a stream part */
-function isToolEvent(item: unknown): item is RuntimeYield {
-  return typeof item === "object" && item !== null && "type" in item && TOOL_EVENT_TYPES.has((item as { type: string }).type)
+/** Check if an item is a RuntimeYield event (from sub-agent/tool queue) vs a base stream part */
+function isRuntimeYield(item: unknown): item is RuntimeYield {
+  return typeof item === "object" && item !== null && "path" in item && "timestamp" in item
 }
 
 /**
@@ -34,7 +31,7 @@ function composeStepMiddleware<Context>(
  * Emits agent-step-llm-call event, streams the response, stores messages, and returns the finish reason.
  */
 async function* executeStep<Context>(c: AgentStepMiddlewareContext<Context>): AgentStepMiddlewareResult {
-  const { path, model, tools: baseTools, widgets, widgetsPickerModel, providerOptions, env, context, memory } = c
+  const { path, nodeId, model, tools: baseTools, widgets, widgetsPickerModel, providerOptions, env, context, memory } = c
 
   // Collect all tools including widget schema tool (uses c.model which may be modified by middleware)
   const allTools: Runner<Context>[] = [...baseTools]
@@ -62,10 +59,12 @@ async function* executeStep<Context>(c: AgentStepMiddlewareContext<Context>): Ag
     type: "agent-step-llm-call",
     path,
     timestamp: performance.now(),
+    nodeId,
     system: fullSystemPrompt,
     messages,
     modelId,
     provider,
+    providerOptions,
   }
 
   // Convert runners (tools/agents) to AI SDK format with async event queue for real-time merging
@@ -96,16 +95,31 @@ async function* executeStep<Context>(c: AgentStepMiddlewareContext<Context>): Ag
   const mergedStream = mergeStreamWithQueue(baseStream, toolEventQueue)
 
   for await (const item of mergedStream) {
-    // Check if this is a tool event from the queue (has 'type' property matching tool event types)
-    if (isToolEvent(item)) {
-      // Yield tool events (e.g., tool-progress, tool-error) directly
+    // Check if this is a runtime yield from the queue (has 'path' and 'timestamp')
+    if (isRuntimeYield(item)) {
+      // Yield runtime events (e.g., tool events, sub-agent events) directly
       yield item
     } else if (item.type === "text-delta") {
       // Yield text delta as agent-stream event with path
-      yield { type: "agent-stream", path, timestamp: performance.now(), part: { type: "text-delta", text: item.text } as TextStreamPart<ToolSet> }
+      yield {
+        type: "agent-stream",
+        path,
+        timestamp: performance.now(),
+        nodeId,
+        part: { type: "text-delta", text: item.text } as TextStreamPart<ToolSet>,
+      }
     } else if (item.type === "widget-delta") {
       // Yield widget delta with path
-      yield { type: "widget-delta", path, timestamp: performance.now(), index: item.index, widget: item.widget }
+      yield { type: "widget-delta", path, timestamp: performance.now(), nodeId, index: item.index, widget: item.widget }
+    } else if (item.type === "finish-step") {
+      // Yield finish-step as agent-stream event with path
+      yield {
+        type: "agent-stream",
+        path,
+        timestamp: performance.now(),
+        nodeId,
+        part: item as TextStreamPart<ToolSet>,
+      }
     }
   }
 
@@ -130,18 +144,29 @@ async function* executeStep<Context>(c: AgentStepMiddlewareContext<Context>): Ag
  */
 export async function* executeLoop<Context>(data: AgentLoopContext<Context>): AsyncGenerator<RuntimeYield, void, unknown> {
   const { system, tools, context, env, memory, widgets, widgetsPickerModel, model, providerOptions, stopCondition } = data
-  // Get current node from context, or create new one for sub-agents
+  // Get current node from context
   const node = getCurrentNode()
 
-  if (!node || node.type !== "agent") throw new Error("executeLoop must run within an agent node context")
+  if (!node) throw new Error("executeLoop must run within a node context")
 
-  const path = getPath(node)
+  const { id: nodeId, path } = node
 
-  node.setStatus("running")
-
-  yield node.addEvent({ type: "agent-begin", path, timestamp: performance.now() })
+  yield {
+    type: "agent-begin",
+    path,
+    timestamp: performance.now(),
+    nodeId,
+    parentId: node.parent?.id,
+    name: path[path.length - 1] ?? "agent",
+    input: data.input,
+  }
 
   try {
+    // Convert input to user message and store in memory
+    const prompt = data.toPrompt ? data.toPrompt(data.input) : data.input
+    const userMessage: UserModelMessage = typeof prompt === "string" ? { role: "user", content: prompt } : (prompt as UserModelMessage)
+    await memory.store(userMessage)
+
     // === INITIALIZATION ===
 
     // 1. Collect base tools (widget schema tool is added per-step in executeStep to use potentially modified model)
@@ -161,13 +186,15 @@ export async function* executeLoop<Context>(data: AgentLoopContext<Context>): As
       }
 
       // Emit step-begin (outside middleware chain)
-      yield node.addEvent({ type: "agent-step-begin", path, timestamp: performance.now(), step })
+      yield { type: "agent-step-begin", path, timestamp: performance.now(), nodeId, step }
 
       // Build step context for middleware chain (step and path are readonly, not modifiable by middleware)
       // Note: executeStep builds system prompt, reads messages from memory, adds widget tool, and stores messages
       const stepContext: AgentStepMiddlewareContext<Context> = {
         step,
+        nodeId,
         path,
+        input: data.input,
         system: system ?? "",
         model,
         tools: baseTools,
@@ -184,8 +211,7 @@ export async function* executeLoop<Context>(data: AgentLoopContext<Context>): As
       let stepResult: IteratorResult<RuntimeYield, FinishReason>
 
       while (!(stepResult = await stepStream.next()).done) {
-        // Events already have path set, just add to node and yield
-        yield node.addEvent(stepResult.value)
+        yield stepResult.value
       }
 
       // Get finish reason and appended messages for step-end event
@@ -193,7 +219,7 @@ export async function* executeLoop<Context>(data: AgentLoopContext<Context>): As
       const appendedMessages = await memory.appended()
 
       // Emit step-end (outside middleware chain)
-      yield node.addEvent({ type: "agent-step-end", path, timestamp: performance.now(), step, finishReason, appended: appendedMessages })
+      yield { type: "agent-step-end", path, timestamp: performance.now(), nodeId, step, finishReason, appended: appendedMessages }
 
       // Check stop condition and break if met
       const shouldStop = await stopCondition({
@@ -209,15 +235,9 @@ export async function* executeLoop<Context>(data: AgentLoopContext<Context>): As
       step++
     }
 
-    yield node.addEvent({ type: "agent-end", path, timestamp: performance.now() })
-
-    node.setStatus("completed")
-    node.setMessages(await memory.read())
+    yield { type: "agent-end", path, timestamp: performance.now(), nodeId }
   } catch (error) {
-    yield node.addEvent({ type: "agent-error", path, timestamp: performance.now(), error: error as Error })
-
-    node.setError(error as Error)
-    node.setStatus("failed")
+    yield { type: "agent-error", path, timestamp: performance.now(), nodeId, error: error as Error }
     throw error
   }
 }

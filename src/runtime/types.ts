@@ -10,8 +10,8 @@ import type {
 import type { DescribeRegistry } from "@gumbee/structured"
 import type { z } from "@gumbee/structured"
 import type { Memory } from "../memory"
-import type { AgentExecutionNode, ExecutionNode } from "./graph/types"
 import type { Middleware } from "./middleware"
+import type { ExecutionGraph } from "./graph/execution-graph"
 
 // =============================================================================
 // Re-exports
@@ -28,6 +28,7 @@ export type { LanguageModel, UserModelMessage } from "ai"
 export type RunnerEnvironment = {
   abort?: AbortSignal
   toolCallId: string
+  runId: string
 }
 
 export type Runner<Context = any, Input = any, Yields = any, Return = any> = {
@@ -47,38 +48,49 @@ export type Runner<Context = any, Input = any, Yields = any, Return = any> = {
 export type BaseYield = { path: string[]; timestamp: number }
 
 // Tool yields
-export type ToolBeginYield = BaseYield & { type: "tool-begin"; tool: string; toolCallId: string; input?: unknown }
+export type ToolBeginYield = BaseYield & { type: "tool-begin"; tool: string; toolCallId: string; input?: unknown; parentId?: string }
 export type ToolEndYield = BaseYield & { type: "tool-end"; tool: string; toolCallId: string; output?: unknown }
 export type ToolErrorYield = BaseYield & { type: "tool-error"; tool: string; toolCallId: string; error: Error }
 export type ToolProgressYield<T = unknown> = BaseYield & { type: "tool-progress"; tool: string; toolCallId: string; event: T }
 export type ToolYield = ToolBeginYield | ToolEndYield | ToolErrorYield | ToolProgressYield
 
+export type ThinkingConfig = {
+  enabled: boolean
+  level?: "low" | "medium" | "high"
+  budgetTokens?: number
+}
+
 // Agent yields
-export type AgentBeginYield = BaseYield & { type: "agent-begin" }
-export type AgentEndYield = BaseYield & { type: "agent-end" }
+export type AgentBeginYield = BaseYield & { type: "agent-begin"; nodeId: string; parentId?: string; name: string; input: unknown }
+export type AgentEndYield = BaseYield & { type: "agent-end"; nodeId: string }
 export type AgentStepBeginYield = BaseYield & {
   type: "agent-step-begin"
+  nodeId: string
   step: number
 }
 export type AgentStepLLMCallYield = BaseYield & {
   type: "agent-step-llm-call"
+  nodeId: string
   system: string
   messages: ModelMessage[]
   modelId: string
   provider: string
+  providerOptions?: Record<string, Record<string, JSONValue>>
 }
 export type AgentStepEndYield = BaseYield & {
   type: "agent-step-end"
+  nodeId: string
   step: number
   finishReason: FinishReason
   appended: ModelMessage[]
 }
-export type AgentErrorYield = BaseYield & { type: "agent-error"; error: Error }
-export type AgentStreamYield = BaseYield & { type: "agent-stream"; part: TextStreamPart<ToolSet> }
+export type AgentErrorYield = BaseYield & { type: "agent-error"; nodeId: string; error: Error }
+export type AgentStreamYield = BaseYield & { type: "agent-stream"; nodeId: string; part: TextStreamPart<ToolSet> }
 
 // Widget yield (extension for rich UI)
 export type WidgetDeltaYield<T = unknown> = BaseYield & {
   type: "widget-delta"
+  nodeId: string
   index: number
   widget: T
 }
@@ -180,13 +192,24 @@ export type StopConditionInfo = {
 export type StopCondition = (info: StopConditionInfo) => boolean | Promise<boolean>
 export type SystemPrompt<Context = {}> = string | ((context: Context) => Promise<string> | string)
 
-export type AgentConfig<Context = {}> = {
+export type AgentConfig<Context = {}, Input = string, Output = { response: string }, Yield extends { type: string } = { type: string }> = {
   name: string
   description: string
   /** System prompt - can be string or function of context */
   system?: SystemPrompt<Context>
   /** Instructions for when agent is used as a sub-agent (not used if root) */
   instructions?: string
+  /** Optional input schema for the agent when it's used as a subagent call (called as a tool) */
+  input?: z.ZodSchema<Input>
+  /** Maps structured input to a prompt for the LLM. Required when Input is not string. */
+  toPrompt?: (input: Input) => string | UserModelMessage
+  /** Optional custom execution logic */
+  execute?: (
+    run: (input: Input) => AgentResult<Context>,
+    input: Input,
+    context: Context,
+    env: RunnerEnvironment,
+  ) => AsyncGenerator<Yield, Output> | Promise<Output>
   model: LanguageModel
   /** Optional default memory (can be overridden via run options) */
   memory?: Memory
@@ -198,7 +221,6 @@ export type AgentConfig<Context = {}> = {
   widgets?: DescribeRegistry
   /** Model to use for widget selection (defaults to main model) */
   widgetsPickerModel?: LanguageModel
-  maxSteps?: number
   /** Provider-specific options (e.g. thinking budget for Claude) */
   providerOptions?: Record<string, Record<string, JSONValue>>
 }
@@ -224,6 +246,10 @@ export type AgentLoopContext<Context> = {
   context: Context
   /** Runner environment */
   env: RunnerEnvironment
+  /** The input/prompt that triggered this agent */
+  input: unknown
+  /** Maps structured input to a prompt for the LLM */
+  toPrompt?: (input: unknown) => string | UserModelMessage
   /** loop stopper */
   stopCondition: StopCondition
   /** agent configs */
@@ -235,11 +261,10 @@ export type AgentLoopContext<Context> = {
 }
 
 /**
- * Agent result containing stream, memory, and execution graph references.
+ * Agent result containing stream, memory, and execution graph.
  *
- * Note: `node` and `context` are promises that resolve when the stream is fully consumed.
- * If using retry middleware, these values reflect the successful attempt after
- * stream consumption completes.
+ * The `graph` is an ExecutionGraph that is populated as the stream is consumed.
+ * The `context` promise resolves when the stream is fully consumed.
  *
  * @example
  * ```typescript
@@ -247,12 +272,8 @@ export type AgentLoopContext<Context> = {
  *
  * for await (const event of result.stream) { ... }
  *
- * // Access node and context (resolves after stream consumed)
- * const node = await result.node
- * console.log(node.status)
- *
- * const context = await result.context
- * console.log(context.model)
+ * // Access the execution graph (populated after stream consumed)
+ * console.log(result.graph.root)
  * ```
  */
 export type AgentResult<Context = any> = {
@@ -260,16 +281,17 @@ export type AgentResult<Context = any> = {
   stream: AsyncGenerator<RuntimeYield, void, unknown>
   /** Memory that was used (might have been created fresh if needed) */
   memory: Memory
-  /** Execution graph (root node if top-level, or existing parent if sub-agent) */
-  graph: ExecutionNode
-  /** This agent's execution node (resolves after stream consumed) */
-  node: Promise<AgentExecutionNode>
+  /** Execution graph built from events (populated as stream is consumed) */
+  graph: ExecutionGraph
   /** The loop context used (resolves after stream consumed, reflects successful attempt's context) */
   context: Promise<AgentLoopContext<Context>>
+  /** Abort the agent execution (cancels LLM calls, tools, and the loop) */
+  abort: () => void
 }
 
-export type Agent<Context = {}> = Runner<Context, string, RuntimeYield, { response: string }> & {
-  run(prompt: string | UserModelMessage, context: Context, options?: AgentRunOptions<Context>): AgentResult<Context>
+export type Agent<Context = {}, Input = string, Output = { response: string }> = Runner<Context, Input, RuntimeYield, Output> & {
+  input?: z.ZodSchema<Input>
+  run(input: Input, context: Context, options?: AgentRunOptions<Context>): AgentResult<Context>
 }
 
 // =============================================================================

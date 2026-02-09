@@ -4,10 +4,10 @@
 
 import { tool as aiTool, type ToolResultPart, type ToolSet } from "ai"
 import { z } from "@gumbee/structured"
-import { getCurrentNode, getMiddlewares, getPath } from "./graph/context"
-import { createToolNode } from "./graph/node"
+import { getCurrentNode, getMiddlewares } from "./graph/context"
+import { createNode } from "./graph/node"
 import type { ToolMiddlewareContext, ToolMiddlewareResult } from "./middleware"
-import { type RuntimeYield, type Runner, type RunnerEnvironment, type Tool, type ToolConfig, type ToolYield } from "./types"
+import { type RuntimeYield, type Runner, type RunnerEnvironment, type Tool, type ToolConfig, type ToolYield, type Agent } from "./types"
 
 // =============================================================================
 // Helpers
@@ -41,7 +41,7 @@ function isAsyncGenerator<T, R>(value: AsyncGenerator<T, R> | Promise<R>): value
  * })
  * ```
  */
-export const tool = <Context = {}, TSchema extends z.ZodSchema = z.ZodSchema<any>, Output = any, CustomYields = never>(
+export const tool = <Context, TSchema extends z.ZodSchema, Output, CustomYields>(
   config: Omit<ToolConfig<Context, z.infer<TSchema>, Output, CustomYields>, "input"> & { input: TSchema },
 ): Tool<Context, z.infer<TSchema>, Output, CustomYields> => {
   type Input = z.infer<TSchema>
@@ -59,20 +59,24 @@ export const tool = <Context = {}, TSchema extends z.ZodSchema = z.ZodSchema<any
 
       // Base execution function as async generator
       async function* base(ctx: ToolMiddlewareContext<Context, Input>): ToolMiddlewareResult<Output> {
-        // Get parent node from context and create ToolExecutionNode
+        // Get parent node from context and create minimal node for this tool
         const parent = getCurrentNode() ?? null
-        const node = createToolNode(config.name, ctx.input, parent)
-        const path = getPath(node)
+        const node = createNode(config.name, parent)
+        const { id: toolCallId, path } = node
 
-        node.setStatus("running")
-
-        const toolCallId = node.id
-
-        yield node.addEvent({ type: "tool-begin", path, timestamp: performance.now(), tool: config.name, toolCallId, input: ctx.input })
+        yield {
+          type: "tool-begin",
+          path,
+          timestamp: performance.now(),
+          tool: config.name,
+          toolCallId,
+          input: ctx.input,
+          parentId: node.parent?.id,
+        }
 
         try {
           // Execute the tool - handle both async generators and plain async functions
-          const executionResult = config.execute(ctx.input, ctx.context, { abort: ctx.env.abort, toolCallId })
+          const executionResult = config.execute(ctx.input, ctx.context, { abort: ctx.env.abort, toolCallId, runId: ctx.env.runId })
           let result: Output
 
           // Check if it's an async generator (has .next method) or a promise
@@ -87,32 +91,26 @@ export const tool = <Context = {}, TSchema extends z.ZodSchema = z.ZodSchema<any
               }
 
               // Yield custom events from the tool's execute function
-              yield node.addEvent({
+              yield {
                 type: "tool-progress",
                 path,
                 timestamp: performance.now(),
                 tool: config.name,
                 toolCallId,
                 event: iterResult.value,
-              })
+              }
             }
           } else {
             // It's a promise - just await the result
             result = await executionResult
           }
 
-          node.setOutput(result)
-          node.setStatus("completed")
-
-          yield node.addEvent({ type: "tool-end", path, timestamp: performance.now(), tool: config.name, toolCallId, output: result })
+          yield { type: "tool-end", path, timestamp: performance.now(), tool: config.name, toolCallId, output: result }
 
           return result
         } catch (error) {
           console.error(`[tool:${config.name}] Error:`, error)
-          yield node.addEvent({ type: "tool-error", path, timestamp: performance.now(), tool: config.name, toolCallId, error: error as Error })
-
-          node.setError(error as Error)
-          node.setStatus("failed")
+          yield { type: "tool-error", path, timestamp: performance.now(), tool: config.name, toolCallId, error: error as Error }
           throw error
         }
       }
@@ -150,6 +148,13 @@ export function isTool(runner: Runner): runner is Tool {
   return "input" in runner && (runner as Tool).input !== undefined
 }
 
+/**
+ * Check if a runner is an Agent (has a 'run' method).
+ */
+export function isAgent(runner: Runner): runner is Agent {
+  return "run" in runner && typeof (runner as any).run === "function"
+}
+
 // =============================================================================
 // AI SDK Conversion Utilities
 // =============================================================================
@@ -174,7 +179,7 @@ const AGENT_INPUT_SCHEMA = z
  *
  * This is the key function that enables hierarchical agents:
  * - Tools use their own input schema and description
- * - Agents use AGENT_INPUT_SCHEMA and their `instructions` field as the description
+ * - Agents use their input schema, or fallback to AGENT_INPUT_SCHEMA and their `instructions` field as the description
  *
  * Events yielded during execution are passed to onYield for observability.
  */
@@ -186,18 +191,38 @@ export function convertRunnersForAI<Context>(
 ): ToolSet {
   return Object.fromEntries(
     runners.map((runner) => {
-      const isToolRunner = isTool(runner)
+      const isAgentRunner = isAgent(runner)
+      const isToolRunner = !isAgentRunner && isTool(runner)
+
+      // Determine input schema and description
+      let inputSchema: z.ZodSchema<any> = AGENT_INPUT_SCHEMA
+      let description = runner.description
+
+      if (isToolRunner) {
+        inputSchema = runner.input
+        description = runner.description
+      } else if (isAgentRunner) {
+        const agent = runner as Agent
+        inputSchema = agent.input ?? AGENT_INPUT_SCHEMA
+        description = agent.instructions ?? agent.description
+      }
 
       return [
         runner.name,
         aiTool<any, any>({
-          // Agents use `instructions` for LLM guidance on when to use them
-          description: isToolRunner ? runner.description : (runner.instructions ?? runner.description),
-          // Agents always receive { prompt: string }, tools use their own schema
-          inputSchema: isToolRunner ? runner.input : AGENT_INPUT_SCHEMA,
+          description,
+          inputSchema,
           execute: async (input: any) => {
-            // For agents, extract the prompt string from the wrapped input
-            const gen = runner.execute(isToolRunner ? input : input.prompt, context, env)
+            // For agents, extract the prompt string from the wrapped input UNLESS it has a custom input schema
+            let executionInput = input
+            if (isAgentRunner) {
+              const agent = runner as Agent
+              if (!agent.input) {
+                executionInput = input.prompt
+              }
+            }
+
+            const gen = runner.execute(executionInput, context, env)
             let result: IteratorResult<RuntimeYield, unknown>
 
             while (!(result = await gen.next()).done) {

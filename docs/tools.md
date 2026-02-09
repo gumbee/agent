@@ -23,13 +23,13 @@ const weatherTool = tool({
 
 ## Configuration Options
 
-| Option         | Type                      | Description                                              |
-| -------------- | ------------------------- | -------------------------------------------------------- |
-| `name`         | `string`                  | Required identifier for the tool                         |
-| `description`  | `string`                  | Required description shown to the LLM                    |
-| `instructions` | `string`                  | Optional instructions injected into the system prompt    |
-| `input`        | `z.ZodSchema`             | Required Zod schema defining the tool's input parameters |
-| `execute`      | `(input, context, env) => Promise<Output> \| AsyncGenerator` | Required execution function |
+| Option         | Type                                                         | Description                                              |
+| -------------- | ------------------------------------------------------------ | -------------------------------------------------------- |
+| `name`         | `string`                                                     | Required identifier for the tool                         |
+| `description`  | `string`                                                     | Required description shown to the LLM                    |
+| `instructions` | `string`                                                     | Optional instructions injected into the system prompt    |
+| `input`        | `z.ZodSchema`                                                | Required Zod schema defining the tool's input parameters |
+| `execute`      | `(input, context, env) => Promise<Output> \| AsyncGenerator` | Required execution function                              |
 
 ## The `instructions` Field
 
@@ -111,19 +111,18 @@ When using the calculator:
 
 This means each tool can carry its own usage guidelines, and they are automatically included when the tool is available to the agent.
 
-## Execute Function
+## Type Safety
 
-The `execute` function receives three arguments:
+Both `tool()` and `agent()` use generics:
 
-| Argument  | Type                | Description                                        |
-| --------- | ------------------- | -------------------------------------------------- |
-| `input`   | Inferred from schema | The parsed and validated input                    |
-| `context` | `Context`            | Application context passed to `agent.run()`       |
-| `env`     | `RunnerEnvironment`  | Runtime environment with `abort` signal and `toolCallId` |
+```typescript
+tool<Context, TSchema extends z.ZodSchema, Output, CustomYields>(config)
+agent<Context, Input = string | UserModelMessage, Output = { response: string }>(config)
+```
 
-### Using Context
+For `tool()`, none of the generic parameters have defaults. This means you cannot pass partial generics -- TypeScript requires either all four or none. For `agent()`, `Context` has no default while `Input` and `Output` do, so `agent<MyContext>()` compiles but prevents `Input` and `Output` from being inferred from your config.
 
-Tools can access application-specific context passed when running the agent:
+In both cases, the recommended approach is to **let TypeScript infer everything** and provide type hints through parameter annotations instead of explicit generics:
 
 ```typescript
 type AppContext = {
@@ -131,15 +130,66 @@ type AppContext = {
   db: Database
 }
 
-const getUserOrders = tool<AppContext>({
+// Good -- no generics, context typed via parameter annotation
+const getUserOrders = tool({
   name: "get_orders",
   description: "Get orders for the current user",
   input: z.object({
     limit: z.number().optional().describe("Max number of orders to return"),
   }),
-  execute: async ({ limit }, context) => {
-    const orders = await context.db.orders.findMany({
-      where: { userId: context.userId },
+  execute: async ({ limit }, context: AppContext) => {
+    // `limit` is correctly inferred as `number | undefined`
+    // `context` is typed as AppContext
+  },
+})
+```
+
+This works because TypeScript infers `TSchema` from the `input` field and `Output` from the return type of `execute`, while the context type is provided inline through the parameter annotation.
+
+The same principle applies to agents:
+
+```typescript
+// Good -- input type inferred from schema, context typed via parameter
+const myAgent = agent({
+  name: "analyzer",
+  model: openai("gpt-4o"),
+  input: z.object({ query: z.string() }),
+  toPrompt: (input) => input.query, // `input` inferred as { query: string }
+  async *execute(run, input, context: AppContext, env) {
+    // `input` inferred from schema, `context` typed via annotation
+  },
+})
+```
+
+## Execute Function
+
+The `execute` function receives three arguments:
+
+| Argument  | Type                 | Description                                                        |
+| --------- | -------------------- | ------------------------------------------------------------------ |
+| `input`   | Inferred from schema | The parsed and validated input                                     |
+| `context` | `Context`            | Application context passed to `agent.run()`                        |
+| `env`     | `RunnerEnvironment`  | Runtime environment with `abort` signal, `toolCallId`, and `runId` |
+
+### Using Context
+
+Tools can access application-specific context passed when running the agent. Type context through parameter annotations (see [Type Safety](#type-safety)):
+
+```typescript
+type AppContext = {
+  userId: string
+  db: Database
+}
+
+const getUserOrders = tool({
+  name: "get_orders",
+  description: "Get orders for the current user",
+  input: z.object({
+    limit: z.number().optional().describe("Max number of orders to return"),
+  }),
+  execute: async ({ limit }, { db, userId }: AppContext) => {
+    const orders = await db.orders.findMany({
+      where: { userId },
       take: limit ?? 10,
     })
     return orders
@@ -162,8 +212,9 @@ const longRunningTool = tool({
       throw new Error("Operation cancelled")
     }
 
-    // Access the unique tool call ID
+    // Access the unique tool call ID (unique per tool/agent) and run ID (shared across tools/agents per run)
     console.log("Tool call ID:", env.toolCallId)
+    console.log("Run ID:", env.runId)
 
     const result = await processDataset(datasetId, { signal: env.abort })
     return result
@@ -210,7 +261,7 @@ for await (const event of stream) {
 
 ## Subagents as Tools
 
-Agents can be used as tools for other agents. When an agent is used as a tool, the parent agent passes a `{ prompt: string }` input to it, and the subagent's `instructions` field is used as the tool description (helping the parent agent decide when to delegate).
+Agents can be used as tools for other agents. By default, the parent agent passes a `string | UserModelMessage` input to the subagent, and the subagent's `instructions` field is used as the tool description (helping the parent agent decide when to delegate).
 
 ```typescript
 const researchAgent = agent({
@@ -228,5 +279,26 @@ const orchestrator = agent({
   tools: [researchAgent, writerAgent], // Agents used as tools
 })
 ```
+
+### Custom Input Schemas
+
+Subagents can define a custom `input` schema for structured input from the parent agent. When using a custom input type, provide a `toPrompt` function to map the structured input to a prompt for the LLM:
+
+```typescript
+const analysisAgent = agent({
+  name: "analyzer",
+  description: "Analyzes data with specific parameters",
+  instructions: "Analyze the provided data according to the given parameters.",
+  model: openai("gpt-4o"),
+  input: z.object({
+    data: z.string().describe("The data to analyze"),
+    format: z.enum(["summary", "detailed"]).describe("Output format"),
+  }),
+  toPrompt: (input) => `Analyze this data (format: ${input.format}):\n${input.data}`,
+  tools: [chartTool],
+})
+```
+
+When `Input` is the default `string | UserModelMessage`, no `toPrompt` is needed -- the input is passed directly to the LLM.
 
 See the [Agents documentation](./agents.md#subagents) for more details on subagent patterns.

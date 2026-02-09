@@ -1,5 +1,12 @@
 # @gumbee/agent
 
+## 1.2.0
+
+### Minor Changes
+
+- improved typesafety docs and defaults. Switched to an execution graph built up from stream events
+- added customizable agent input schema and overridable execute method for agents to customize behaviour
+
 ## 1.1.0
 
 ### Minor Changes
