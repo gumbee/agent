@@ -7,13 +7,22 @@
 
 import { AsyncLocalStorage } from "async_hooks"
 import type { Middleware } from "../middleware"
+import type { Agent } from "../types"
 import type { Node } from "./types"
+
+export type MiddlewareEntry<Context = any> = {
+  middleware: Middleware<Context, any>
+  origin: Agent<Context>
+}
 
 // Stores the current node in the execution context
 export const graphNodeStorage: AsyncLocalStorage<Node> = new AsyncLocalStorage<Node>()
 
-// Stores the active middlewares for the current subtree
-export const middlewareStorage: AsyncLocalStorage<Middleware[]> = new AsyncLocalStorage<Middleware[]>()
+// Stores the currently executing agent for propagation decisions
+export const agentStorage: AsyncLocalStorage<Agent<any>> = new AsyncLocalStorage<Agent<any>>()
+
+// Stores the active middleware entries for the current subtree
+export const middlewareStorage: AsyncLocalStorage<MiddlewareEntry<any>[]> = new AsyncLocalStorage<MiddlewareEntry<any>[]>()
 
 /**
  * Get current node from context (undefined if not in graph execution)
@@ -32,18 +41,28 @@ export function runWithNode<T>(node: Node, fn: () => T): T {
 }
 
 /**
- * Wrap an async generator so each iteration runs within the node context.
- * This is necessary because async generators are lazily evaluated - the code
- * inside the generator only runs when .next() is called, which may be outside
- * the original runWithNode scope.
+ * Get current agent from context (undefined if not in agent execution).
  */
-export async function* wrapGeneratorWithNode<T, TReturn>(
-  node: Node,
+export function getCurrentAgent<Context = any>(): Agent<Context> | undefined {
+  return agentStorage.getStore() as Agent<Context> | undefined
+}
+
+/**
+ * Generic helper that wraps an async generator so each iteration
+ * runs within the given AsyncLocalStorage context.
+ *
+ * This is necessary because async generators are lazily evaluated — the code
+ * inside the generator only runs when .next() is called, which may be outside
+ * the original storage.run() scope.
+ */
+async function* wrapGeneratorWithStorage<S, T, TReturn>(
+  storage: AsyncLocalStorage<S>,
+  value: S,
   generator: AsyncGenerator<T, TReturn, unknown>,
 ): AsyncGenerator<T, TReturn, unknown> {
   try {
     while (true) {
-      const result = await graphNodeStorage.run(node, () => generator.next())
+      const result = await storage.run(value, () => generator.next())
       if (result.done) {
         return result.value
       }
@@ -51,8 +70,25 @@ export async function* wrapGeneratorWithNode<T, TReturn>(
     }
   } finally {
     // Ensure cleanup runs in context if generator is closed early
-    await graphNodeStorage.run(node, () => generator.return(undefined as TReturn))
+    await storage.run(value, () => generator.return(undefined as TReturn))
   }
+}
+
+/**
+ * Wrap an async generator so each iteration runs within the agent context.
+ */
+export function wrapGeneratorWithAgent<T, TReturn>(
+  agent: Agent<any>,
+  generator: AsyncGenerator<T, TReturn, unknown>,
+): AsyncGenerator<T, TReturn, unknown> {
+  return wrapGeneratorWithStorage(agentStorage, agent, generator)
+}
+
+/**
+ * Wrap an async generator so each iteration runs within the node context.
+ */
+export function wrapGeneratorWithNode<T, TReturn>(node: Node, generator: AsyncGenerator<T, TReturn, unknown>): AsyncGenerator<T, TReturn, unknown> {
+  return wrapGeneratorWithStorage(graphNodeStorage, node, generator)
 }
 
 // =============================================================================
@@ -64,40 +100,34 @@ export async function* wrapGeneratorWithNode<T, TReturn>(
  * These are the "active middlewares" for the current subtree.
  * Returns empty array if no middlewares are registered.
  */
-export function getMiddlewares<Context = any>(): Middleware<Context>[] {
-  return (middlewareStorage.getStore() ?? []) as Middleware<Context>[]
+export function getMiddlewares<Context = any>(): Middleware<Context, any>[] {
+  return getMiddlewareEntries<Context>().map((entry) => entry.middleware)
 }
 
 /**
- * Run function with the given middlewares as the active set.
+ * Get current middleware entries from AsyncLocalStorage.
+ * Returns empty array if no middleware entries are registered.
+ */
+export function getMiddlewareEntries<Context = any>(): MiddlewareEntry<Context>[] {
+  return (middlewareStorage.getStore() ?? []) as MiddlewareEntry<Context>[]
+}
+
+/**
+ * Run function with the given middleware entries as the active set.
  * Used when entering an agent to establish its subtree's middleware context.
  * All code executed within fn (including async operations) will
- * have access to these middlewares via getMiddlewares().
+ * have access to these middleware entries via getMiddlewareEntries().
  */
-export function runWithMiddlewares<T>(middlewares: Middleware[], fn: () => T): T {
-  return middlewareStorage.run(middlewares, fn)
+export function runWithMiddlewares<T>(entries: MiddlewareEntry<any>[], fn: () => T): T {
+  return middlewareStorage.run(entries, fn)
 }
 
 /**
  * Wrap an async generator so each iteration runs within the middleware context.
- * This is necessary because async generators are lazily evaluated - the code
- * inside the generator only runs when .next() is called, which may be outside
- * the original runWithMiddlewares scope.
  */
-export async function* wrapGeneratorWithMiddlewares<T, TReturn>(
-  middlewares: Middleware[],
+export function wrapGeneratorWithMiddlewares<T, TReturn>(
+  entries: MiddlewareEntry<any>[],
   generator: AsyncGenerator<T, TReturn, unknown>,
 ): AsyncGenerator<T, TReturn, unknown> {
-  try {
-    while (true) {
-      const result = await middlewareStorage.run(middlewares, () => generator.next())
-      if (result.done) {
-        return result.value
-      }
-      yield result.value
-    }
-  } finally {
-    // Ensure cleanup runs in context if generator is closed early
-    await middlewareStorage.run(middlewares, () => generator.return(undefined as TReturn))
-  }
+  return wrapGeneratorWithStorage(middlewareStorage, entries, generator)
 }

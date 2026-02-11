@@ -42,57 +42,69 @@ export type Runner<Context = any, Input = any, Yields = any, Return = any> = {
 }
 
 // =============================================================================
-// Yield Types (events emitted during execution)
+// Yield Metadata (runtime-injected fields)
 // =============================================================================
 
 export type BaseYield = { path: string[]; timestamp: number }
 
+/** Metadata automatically injected by the runtime onto yielded events */
+export type YieldMetadata = BaseYield & { nodeId: string; parentId?: string }
+
+/** Wraps a yield type with runtime metadata fields (path, timestamp, nodeId, parentId) */
+export type WithMetadata<T extends { type: string }> = [T] extends [never] ? never : T & YieldMetadata
+
+/** @deprecated Use `WithMetadata<YourEventType>` instead */
+export type CustomYieldBase = YieldMetadata & { type: string }
+
+// =============================================================================
+// Yield Types (events emitted during execution — without metadata)
+// =============================================================================
+
 // Tool yields
-export type ToolBeginYield = BaseYield & { type: "tool-begin"; tool: string; toolCallId: string; input?: unknown; parentId?: string }
-export type ToolEndYield = BaseYield & { type: "tool-end"; tool: string; toolCallId: string; output?: unknown }
-export type ToolErrorYield = BaseYield & { type: "tool-error"; tool: string; toolCallId: string; error: Error }
-export type ToolProgressYield<T = unknown> = BaseYield & { type: "tool-progress"; tool: string; toolCallId: string; event: T }
+export type ToolBeginYield = { type: "tool-begin"; tool: string; toolCallId: string; input?: unknown }
+export type ToolEndYield = { type: "tool-end"; tool: string; toolCallId: string; output?: unknown }
+export type ToolErrorYield = { type: "tool-error"; tool: string; toolCallId: string; error: Error }
+export type ToolProgressYield<T = unknown> = { type: "tool-progress"; tool: string; toolCallId: string; event: T }
 export type ToolYield = ToolBeginYield | ToolEndYield | ToolErrorYield | ToolProgressYield
 
 export type ThinkingConfig = {
   enabled: boolean
-  level?: "low" | "medium" | "high"
+  level?: "minimal" | "low" | "medium" | "high"
   budgetTokens?: number
 }
 
 // Agent yields
-export type AgentBeginYield = BaseYield & { type: "agent-begin"; nodeId: string; parentId?: string; name: string; input: unknown }
-export type AgentEndYield = BaseYield & { type: "agent-end"; nodeId: string }
-export type AgentStepBeginYield = BaseYield & {
-  type: "agent-step-begin"
-  nodeId: string
-  step: number
-}
-export type AgentStepLLMCallYield = BaseYield & {
+export type AgentBeginYield = { type: "agent-begin"; name: string; input: unknown }
+export type AgentEndYield = { type: "agent-end" }
+export type AgentStepBeginYield = { type: "agent-step-begin"; step: number }
+export type AgentStepLLMCallYield = {
   type: "agent-step-llm-call"
-  nodeId: string
   system: string
   messages: ModelMessage[]
   modelId: string
   provider: string
   providerOptions?: Record<string, Record<string, JSONValue>>
 }
-export type AgentStepEndYield = BaseYield & {
+export type AgentStepEndYield = {
   type: "agent-step-end"
-  nodeId: string
   step: number
   finishReason: FinishReason
   appended: ModelMessage[]
 }
-export type AgentErrorYield = BaseYield & { type: "agent-error"; nodeId: string; error: Error }
-export type AgentStreamYield = BaseYield & { type: "agent-stream"; nodeId: string; part: TextStreamPart<ToolSet> }
+export type AgentErrorYield = { type: "agent-error"; error: Error }
+export type AgentStreamYield = { type: "agent-stream"; part: TextStreamPart<ToolSet> }
 
 // Widget yield (extension for rich UI)
-export type WidgetDeltaYield<T = unknown> = BaseYield & {
-  type: "widget-delta"
-  nodeId: string
-  index: number
-  widget: T
+export type WidgetDeltaYield<T = unknown> = { type: "widget-delta"; index: number; widget: T }
+
+// Agent step retry yield (emitted by fallback middleware)
+export type AgentStepRetryYield = {
+  type: "agent-step-retry"
+  step: number
+  attempt: number
+  error: string
+  toModelId: string
+  toProvider: string
 }
 
 export type AgentYield =
@@ -104,9 +116,15 @@ export type AgentYield =
   | AgentErrorYield
   | AgentStreamYield
   | WidgetDeltaYield
+  | AgentStepRetryYield
+
+// =============================================================================
+// Runtime Yield (union of all event types)
+// =============================================================================
 
 // Combined yields for agent execution (agents can yield both agent and tool events)
-export type RuntimeYield = AgentYield | ToolYield
+// Generic `Custom` parameter allows extending with user-defined yield types
+export type RuntimeYield<Custom extends { type: string } = never> = AgentYield | ToolYield | Custom
 
 // Helper types for extracting tool call/result info from AgentStreamYield parts
 /** Tool call info extracted from agent-stream parts (type: "tool-call") */
@@ -138,7 +156,12 @@ export type ToolConfig<Context = any, Input = any, Output = any, CustomYields = 
   execute: (input: Input, context: Context, env: RunnerEnvironment) => AsyncGenerator<CustomYields, Output> | Promise<Output>
 }
 
-export type Tool<Context = any, Input = any, Output = any, CustomYields = never> = Runner<Context, Input, ToolYield | CustomYields, Output> & {
+export type Tool<Context = any, Input = any, Output = any, CustomYields = never> = Runner<
+  Context,
+  Input,
+  WithMetadata<ToolYield> | CustomYields,
+  Output
+> & {
   input: z.ZodSchema<Input>
 }
 
@@ -192,7 +215,7 @@ export type StopConditionInfo = {
 export type StopCondition = (info: StopConditionInfo) => boolean | Promise<boolean>
 export type SystemPrompt<Context = {}> = string | ((context: Context) => Promise<string> | string)
 
-export type AgentConfig<Context = {}, Input = string, Output = { response: string }, Yield extends { type: string } = { type: string }> = {
+export type AgentConfig<Context = {}, Input = string, Output = { response: string }, Yield extends { type: string } = never> = {
   name: string
   description: string
   /** System prompt - can be string or function of context */
@@ -205,7 +228,7 @@ export type AgentConfig<Context = {}, Input = string, Output = { response: strin
   toPrompt?: (input: Input) => string | UserModelMessage
   /** Optional custom execution logic */
   execute?: (
-    run: (input: Input) => AgentResult<Context>,
+    run: (input: Input) => AgentResult<Context, any>,
     input: Input,
     context: Context,
     env: RunnerEnvironment,
@@ -214,7 +237,7 @@ export type AgentConfig<Context = {}, Input = string, Output = { response: strin
   /** Optional default memory (can be overridden via run options) */
   memory?: Memory
   /** Optional default middleware (can be extended via run options) */
-  middleware?: Middleware<Context>[]
+  middleware?: Middleware<Context, any>[]
   tools?: Runner<Context>[]
   stopCondition?: StopCondition
   /** Widget registry for rich UI responses */
@@ -234,7 +257,7 @@ export type AgentRunOptions<Context = any> = {
   /** Abort signal for cancellation */
   abort?: AbortSignal
   /** Additional middleware to wrap the stream (appended to config.middleware, applied in order) */
-  middleware?: Middleware<Context>[]
+  middleware?: Middleware<Context, any>[]
 }
 
 export type AgentLoopContext<Context> = {
@@ -276,9 +299,9 @@ export type AgentLoopContext<Context> = {
  * console.log(result.graph.root)
  * ```
  */
-export type AgentResult<Context = any> = {
-  /** Async generator yielding all execution events */
-  stream: AsyncGenerator<RuntimeYield, void, unknown>
+export type AgentResult<Context = any, Custom extends { type: string } = never> = {
+  /** Async generator yielding all execution events (with runtime metadata) */
+  stream: AsyncGenerator<WithMetadata<RuntimeYield<Custom>>, void, unknown>
   /** Memory that was used (might have been created fresh if needed) */
   memory: Memory
   /** Execution graph built from events (populated as stream is consumed) */
@@ -289,55 +312,67 @@ export type AgentResult<Context = any> = {
   abort: () => void
 }
 
-export type Agent<Context = {}, Input = string, Output = { response: string }> = Runner<Context, Input, RuntimeYield, Output> & {
+export type Agent<Context = {}, Input = string, Output = { response: string }, Custom extends { type: string } = never> = Runner<
+  Context,
+  Input,
+  WithMetadata<RuntimeYield<Custom>>,
+  Output
+> & {
   input?: z.ZodSchema<Input>
-  run(input: Input, context: Context, options?: AgentRunOptions<Context>): AgentResult<Context>
+  run(input: Input, context: Context, options?: AgentRunOptions<Context>): AgentResult<Context, Custom>
 }
 
 // =============================================================================
 // Type Guards
 // =============================================================================
 
-export function isToolBegin(event: RuntimeYield): event is ToolBeginYield {
+// Type guards are generic so they work with both raw yields and WithMetadata<> wrapped yields.
+// The intersection `T & XxxYield` preserves metadata fields when present.
+
+export function isToolBegin<T extends { type: string }>(event: T): event is T & ToolBeginYield {
   return event.type === "tool-begin"
 }
 
-export function isToolEnd(event: RuntimeYield): event is ToolEndYield {
+export function isToolEnd<T extends { type: string }>(event: T): event is T & ToolEndYield {
   return event.type === "tool-end"
 }
 
-export function isToolError(event: RuntimeYield): event is ToolErrorYield {
+export function isToolError<T extends { type: string }>(event: T): event is T & ToolErrorYield {
   return event.type === "tool-error"
 }
 
-export function isAgentBegin(event: RuntimeYield): event is AgentBeginYield {
+export function isAgentBegin<T extends { type: string }>(event: T): event is T & AgentBeginYield {
   return event.type === "agent-begin"
 }
 
-export function isAgentEnd(event: RuntimeYield): event is AgentEndYield {
+export function isAgentEnd<T extends { type: string }>(event: T): event is T & AgentEndYield {
   return event.type === "agent-end"
 }
 
-export function isAgentStepBegin(event: RuntimeYield): event is AgentStepBeginYield {
+export function isAgentStepBegin<T extends { type: string }>(event: T): event is T & AgentStepBeginYield {
   return event.type === "agent-step-begin"
 }
 
-export function isAgentStepEnd(event: RuntimeYield): event is AgentStepEndYield {
+export function isAgentStepEnd<T extends { type: string }>(event: T): event is T & AgentStepEndYield {
   return event.type === "agent-step-end"
 }
 
-export function isAgentStepLLMCall(event: RuntimeYield): event is AgentStepLLMCallYield {
+export function isAgentStepLLMCall<T extends { type: string }>(event: T): event is T & AgentStepLLMCallYield {
   return event.type === "agent-step-llm-call"
 }
 
-export function isAgentError(event: RuntimeYield): event is AgentErrorYield {
+export function isAgentError<T extends { type: string }>(event: T): event is T & AgentErrorYield {
   return event.type === "agent-error"
 }
 
-export function isAgentStream(event: RuntimeYield): event is AgentStreamYield {
+export function isAgentStream<T extends { type: string }>(event: T): event is T & AgentStreamYield {
   return event.type === "agent-stream"
 }
 
-export function isWidgetDelta(event: RuntimeYield): event is WidgetDeltaYield {
+export function isWidgetDelta<T extends { type: string }>(event: T): event is T & WidgetDeltaYield {
   return event.type === "widget-delta"
+}
+
+export function isAgentStepRetry<T extends { type: string }>(event: T): event is T & AgentStepRetryYield {
+  return event.type === "agent-step-retry"
 }

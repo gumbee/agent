@@ -4,10 +4,19 @@
 
 import { tool as aiTool, type ToolResultPart, type ToolSet } from "ai"
 import { z } from "@gumbee/structured"
-import { getCurrentNode, getMiddlewares } from "./graph/context"
+import { getCurrentAgent, getCurrentNode, getMiddlewareEntries } from "./graph/context"
 import { createNode } from "./graph/node"
 import type { ToolMiddlewareContext, ToolMiddlewareResult } from "./middleware"
-import { type RuntimeYield, type Runner, type RunnerEnvironment, type Tool, type ToolConfig, type ToolYield, type Agent } from "./types"
+import {
+  type WithMetadata,
+  type RuntimeYield,
+  type Runner,
+  type RunnerEnvironment,
+  type Tool,
+  type ToolConfig,
+  type ToolYield,
+  type Agent,
+} from "./types"
 
 // =============================================================================
 // Helpers
@@ -53,25 +62,51 @@ export const tool = <Context, TSchema extends z.ZodSchema, Output, CustomYields>
     instructions: config.instructions,
     input: config.input as z.ZodSchema<Input>,
 
-    execute: async function* (input: Input, context: Context, env: RunnerEnvironment): AsyncGenerator<ToolYield | CustomYields, Output> {
-      // Get middlewares from current context that want to handle this tool
-      const middlewares = getMiddlewares<Context>().filter((m) => m.shouldDescendIntoTool?.(thisTool) ?? false)
+    execute: async function* (
+      input: Input,
+      context: Context,
+      env: RunnerEnvironment,
+    ): AsyncGenerator<WithMetadata<ToolYield> | CustomYields, Output> {
+      // Get middlewares from current context that want to handle this tool.
+      // If middleware defines handleTool, it automatically descends into tools of its origin agent.
+      const currentAgent = getCurrentAgent<Context>()
+      const middlewares = getMiddlewareEntries<Context>()
+        .filter(({ middleware, origin }) => {
+          if (!currentAgent) {
+            return false
+          }
+
+          if (middleware.handleTool && origin === currentAgent) {
+            return true
+          }
+
+          return (
+            middleware.shouldDescendIntoTool?.({
+              origin,
+              parent: currentAgent,
+              candidate: thisTool,
+            }) ?? false
+          )
+        })
+        .map((entry) => entry.middleware)
+
+      // Create node before middleware chain so each layer can inject metadata defaults
+      const parent = getCurrentNode() ?? null
+      const node = createNode(config.name, parent)
+      const { id: toolCallId, path } = node
 
       // Base execution function as async generator
-      async function* base(ctx: ToolMiddlewareContext<Context, Input>): ToolMiddlewareResult<Output> {
-        // Get parent node from context and create minimal node for this tool
-        const parent = getCurrentNode() ?? null
-        const node = createNode(config.name, parent)
-        const { id: toolCallId, path } = node
-
+      // Uses `any` for Custom since middlewares with different custom yields compose together
+      async function* base(ctx: ToolMiddlewareContext<Context, Input>): ToolMiddlewareResult<Output, any> {
         yield {
           type: "tool-begin",
           path,
           timestamp: performance.now(),
+          nodeId: toolCallId,
+          parentId: node.parent?.id,
           tool: config.name,
           toolCallId,
           input: ctx.input,
-          parentId: node.parent?.id,
         }
 
         try {
@@ -95,6 +130,7 @@ export const tool = <Context, TSchema extends z.ZodSchema, Output, CustomYields>
                 type: "tool-progress",
                 path,
                 timestamp: performance.now(),
+                nodeId: toolCallId,
                 tool: config.name,
                 toolCallId,
                 event: iterResult.value,
@@ -105,19 +141,37 @@ export const tool = <Context, TSchema extends z.ZodSchema, Output, CustomYields>
             result = await executionResult
           }
 
-          yield { type: "tool-end", path, timestamp: performance.now(), tool: config.name, toolCallId, output: result }
+          yield { type: "tool-end", path, timestamp: performance.now(), nodeId: toolCallId, tool: config.name, toolCallId, output: result }
 
           return result
         } catch (error) {
           console.error(`[tool:${config.name}] Error:`, error)
-          yield { type: "tool-error", path, timestamp: performance.now(), tool: config.name, toolCallId, error: error as Error }
+          yield { type: "tool-error", path, timestamp: performance.now(), nodeId: toolCallId, tool: config.name, toolCallId, error: error as Error }
           throw error
         }
       }
 
       // Compose middleware using handleTool (reduceRight so first middleware wraps outermost)
+      // Each layer wraps yielded events with metadata defaults (path, timestamp, nodeId, parentId)
+      // so that outer middlewares always see events with runtime context — even custom yields.
+      // Pattern: defaults first, then spread — existing fields from inner layers override.
       const wrappedExecute = middlewares.reduceRight<typeof base>(
-        (next, mw) => (c) => (mw.handleTool ? (mw.handleTool(c, next) as ToolMiddlewareResult<Output>) : next(c)),
+        (next, mw) =>
+          async function* (c): ToolMiddlewareResult<Output, any> {
+            const gen = mw.handleTool ? mw.handleTool(c, next) : next(c)
+            let result = await gen.next()
+            while (!result.done) {
+              yield {
+                path,
+                timestamp: performance.now(),
+                nodeId: toolCallId,
+                parentId: node.parent?.id,
+                ...result.value,
+              } as any
+              result = await gen.next()
+            }
+            return result.value
+          },
         base,
       )
 
@@ -187,7 +241,7 @@ export function convertRunnersForAI<Context>(
   runners: Runner<Context>[],
   context: Context,
   env: RunnerEnvironment,
-  onYield: (event: RuntimeYield) => void,
+  onYield: (event: RuntimeYield<any>) => void,
 ): ToolSet {
   return Object.fromEntries(
     runners.map((runner) => {
@@ -223,7 +277,7 @@ export function convertRunnersForAI<Context>(
             }
 
             const gen = runner.execute(executionInput, context, env)
-            let result: IteratorResult<RuntimeYield, unknown>
+            let result: IteratorResult<RuntimeYield<any>, unknown>
 
             while (!(result = await gen.next()).done) {
               onYield(result.value)

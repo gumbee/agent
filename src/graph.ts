@@ -22,6 +22,9 @@ export type {
 // Yield types (pure type definitions, no runtime code)
 export type {
   RuntimeYield,
+  WithMetadata,
+  YieldMetadata,
+  CustomYieldBase,
   AgentYield,
   ToolYield,
   AgentBeginYield,
@@ -29,6 +32,7 @@ export type {
   AgentStepBeginYield,
   AgentStepLLMCallYield,
   AgentStepEndYield,
+  AgentStepRetryYield,
   AgentErrorYield,
   AgentStreamYield,
   WidgetDeltaYield,
@@ -52,6 +56,7 @@ export {
   isAgentStepBegin,
   isAgentStepLLMCall,
   isAgentStepEnd,
+  isAgentStepRetry,
   isAgentError,
   isAgentStream,
   isWidgetDelta,

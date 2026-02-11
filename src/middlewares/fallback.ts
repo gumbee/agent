@@ -10,7 +10,7 @@
 
 import type { JSONValue, LanguageModel } from "ai"
 import type { AgentStepMiddlewareContext, AgentStepMiddlewareResult, Middleware } from "../runtime/middleware"
-import type { AgentStreamYield } from "../runtime/types"
+import type { AgentStepRetryYield, AgentStreamYield } from "../runtime/types"
 
 export type FallbackMiddlewareOptions = {
   /** Fallback model to use on failure */
@@ -64,14 +64,14 @@ export type FallbackMiddlewareOptions = {
  * ]
  * ```
  */
-export function fallback<Context = any>(options: FallbackMiddlewareOptions): Middleware<Context> {
+export function fallback<Context = any>(options: FallbackMiddlewareOptions): Middleware<Context, AgentStepRetryYield> {
   const { model, providerOptions, maxRetries = 1, shouldRetry: shouldRetryFn = () => true } = options
 
   return {
     async *handleAgentStep(
       c: AgentStepMiddlewareContext<Context>,
-      next: (c: AgentStepMiddlewareContext<Context>) => AgentStepMiddlewareResult,
-    ): AgentStepMiddlewareResult {
+      next: (c: AgentStepMiddlewareContext<Context>) => AgentStepMiddlewareResult<AgentStepRetryYield>,
+    ): AgentStepMiddlewareResult<AgentStepRetryYield> {
       let attempt = 0
 
       while (attempt <= maxRetries) {
@@ -105,8 +105,6 @@ export function fallback<Context = any>(options: FallbackMiddlewareOptions): Mid
           // Stream completed successfully - return the finish reason
           return result.value
         } catch (error) {
-          console.error("Fallback middleware error:", error)
-
           // Only retry if no content has been produced yet
           if (hasProducedContent) {
             throw error
@@ -115,6 +113,18 @@ export function fallback<Context = any>(options: FallbackMiddlewareOptions): Mid
           const err = error instanceof Error ? error : new Error(String(error))
 
           if (attempt < maxRetries && shouldRetryFn(err, attempt + 1)) {
+            const toModelId = typeof model === "object" && "modelId" in model ? String(model.modelId) : String(model)
+            const toProvider = typeof model === "object" && "provider" in model ? String(model.provider) : "unknown"
+
+            yield {
+              type: "agent-step-retry",
+              step: c.step,
+              attempt: attempt + 1,
+              error: err.message,
+              toModelId,
+              toProvider,
+            }
+
             // Retry with fallback model
             attempt++
             continue

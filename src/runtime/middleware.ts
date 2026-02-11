@@ -13,7 +13,18 @@
 import type { DescribeRegistry } from "@gumbee/structured"
 import type { JSONValue, LanguageModel } from "ai"
 import type { Memory } from "../memory"
-import type { Agent, AgentLoopContext, FinishReason, Runner, RunnerEnvironment, RuntimeYield, SystemPrompt, Tool, ToolYield } from "./types"
+import type {
+  Agent,
+  AgentLoopContext,
+  FinishReason,
+  Runner,
+  RunnerEnvironment,
+  RuntimeYield,
+  SystemPrompt,
+  Tool,
+  ToolYield,
+  WithMetadata,
+} from "./types"
 
 // =============================================================================
 // Middleware Context Types
@@ -32,7 +43,11 @@ export type AgentMiddlewareContext<Context = any> = Omit<AgentLoopContext<Contex
  * Result returned by handleAgent.
  * An async generator that yields events and returns the final context.
  */
-export type AgentMiddlewareResult<Context = any> = AsyncGenerator<RuntimeYield, { context: AgentLoopContext<Context> }, void>
+export type AgentMiddlewareResult<Context = any, Custom extends { type: string } = never> = AsyncGenerator<
+  RuntimeYield<Custom>,
+  { context: AgentLoopContext<Context> },
+  void
+>
 
 /**
  * Context provided to handleTool.
@@ -52,9 +67,10 @@ export type ToolMiddlewareContext<Context = any, Input = unknown, Output = any, 
 
 /**
  * Result returned by handleTool.
- * An async generator that yields events and returns the output.
+ * An async generator that yields events (with metadata) and returns the output.
+ * Generic `Custom` parameter allows middleware to yield additional custom event types.
  */
-export type ToolMiddlewareResult<Output = unknown> = AsyncGenerator<ToolYield, Output, unknown>
+export type ToolMiddlewareResult<Output = unknown, Custom extends { type: string } = never> = AsyncGenerator<WithMetadata<ToolYield> | Custom, Output>
 
 /**
  * Context provided to handleAgentStep.
@@ -95,7 +111,33 @@ export type AgentStepMiddlewareContext<Context = any> = {
  * An async generator that yields runtime events (including step-begin/end) and returns the finish reason.
  * Messages are stored directly to memory within the step execution.
  */
-export type AgentStepMiddlewareResult = AsyncGenerator<RuntimeYield, FinishReason, void>
+export type AgentStepMiddlewareResult<Custom extends { type: string } = never> = AsyncGenerator<RuntimeYield<Custom>, FinishReason, void>
+
+/**
+ * Context provided to shouldDescendIntoAgent.
+ * Contains origin/current/candidate agent details for propagation decisions.
+ */
+export type DescendIntoAgentInfo<Context = any> = {
+  /** The agent where this middleware was originally attached */
+  readonly origin: Agent<Context>
+  /** The current parent agent invoking the candidate subagent */
+  readonly parent: Agent<Context>
+  /** The candidate child agent being considered for descent */
+  readonly candidate: Agent<Context>
+}
+
+/**
+ * Context provided to shouldDescendIntoTool.
+ * Contains origin/current/candidate details for tool propagation decisions.
+ */
+export type DescendIntoToolInfo<Context = any> = {
+  /** The agent where this middleware was originally attached */
+  readonly origin: Agent<Context>
+  /** The current parent agent invoking the candidate tool */
+  readonly parent: Agent<Context>
+  /** The candidate child tool being considered for descent */
+  readonly candidate: Tool<Context, any, any, any>
+}
 
 // =============================================================================
 // Middleware Interface
@@ -130,7 +172,7 @@ export type AgentStepMiddlewareResult = AsyncGenerator<RuntimeYield, FinishReaso
  * }
  * ```
  */
-export interface Middleware<Context = any> {
+export interface Middleware<Context = any, Custom extends { type: string } = never> {
   /**
    * Wrap agent execution. Implement as an async generator to modify context,
    * transform stream, implement retry logic, caching, or short-circuit execution.
@@ -141,8 +183,8 @@ export interface Middleware<Context = any> {
    */
   handleAgent?(
     c: AgentMiddlewareContext<Context>,
-    next: (c: AgentMiddlewareContext<Context>) => AgentMiddlewareResult<Context>,
-  ): AgentMiddlewareResult<Context>
+    next: (c: AgentMiddlewareContext<Context>) => AgentMiddlewareResult<Context, Custom>,
+  ): AgentMiddlewareResult<Context, Custom>
 
   /**
    * Wrap tool execution. Implement as an async generator to modify input,
@@ -154,8 +196,8 @@ export interface Middleware<Context = any> {
    */
   handleTool?<Input, Output>(
     c: ToolMiddlewareContext<Context, Input>,
-    next: (c: ToolMiddlewareContext<Context, Input>) => ToolMiddlewareResult<Output>,
-  ): ToolMiddlewareResult<Output>
+    next: (c: ToolMiddlewareContext<Context, Input>) => ToolMiddlewareResult<Output, Custom>,
+  ): ToolMiddlewareResult<Output, Custom>
 
   /**
    * Wrap individual LLM step execution within an agent loop. Implement as an
@@ -181,23 +223,28 @@ export interface Middleware<Context = any> {
    */
   handleAgentStep?(
     c: AgentStepMiddlewareContext<Context>,
-    next: (c: AgentStepMiddlewareContext<Context>) => AgentStepMiddlewareResult,
-  ): AgentStepMiddlewareResult
+    next: (c: AgentStepMiddlewareContext<Context>) => AgentStepMiddlewareResult<Custom>,
+  ): AgentStepMiddlewareResult<Custom>
 
   /**
    * Whether this middleware should be applied to the given subagent.
    * Called when a parent agent invokes a subagent.
    *
+   * Receives origin/current/candidate agent details in `info`.
+   *
    * If not provided, defaults to false (middleware stays on current agent only).
    */
-  shouldDescendIntoAgent?(agent: Agent<Context>): boolean
+  shouldDescendIntoAgent?(info: DescendIntoAgentInfo<Context>): boolean
 
   /**
    * Whether this middleware should be applied to the given tool.
    * Called when an agent invokes a tool.
    *
-   * If not provided, defaults to false (middleware does not apply to tools).
+   * Receives origin/current/candidate details in `info`.
+   *
+   * Note: if `handleTool` is defined, middleware automatically applies to tools
+   * belonging to the origin agent. This method controls descent into tools
+   * invoked by descendant agents.
    */
-
-  shouldDescendIntoTool?(tool: Tool<Context, any, any, any>): boolean
+  shouldDescendIntoTool?(info: DescendIntoToolInfo<Context>): boolean
 }

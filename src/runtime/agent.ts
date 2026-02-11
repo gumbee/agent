@@ -9,7 +9,15 @@ import type { UserModelMessage } from "ai"
 import { randomUUID } from "crypto"
 import { SimpleMemory } from "../memory/simple"
 import type { Memory } from "../memory"
-import { getCurrentNode, getMiddlewares, runWithNode, wrapGeneratorWithNode, wrapGeneratorWithMiddlewares } from "./graph/context"
+import {
+  getCurrentAgent,
+  getCurrentNode,
+  getMiddlewareEntries,
+  runWithNode,
+  wrapGeneratorWithAgent,
+  wrapGeneratorWithNode,
+  wrapGeneratorWithMiddlewares,
+} from "./graph/context"
 import { createNode } from "./graph/node"
 import type { Node } from "./graph/types"
 import { ExecutionGraph } from "./graph/execution-graph"
@@ -22,6 +30,7 @@ import {
   type AgentLoopContext,
   type AgentResult,
   type AgentRunOptions,
+  type WithMetadata,
   LazyPromise,
   type RunnerEnvironment,
   type RuntimeYield,
@@ -54,9 +63,9 @@ function isAsyncGenerator<T, R>(value: AsyncGenerator<T, R> | Promise<R>): value
  * }
  * ```
  */
-export const agent = <Context, Input = string | UserModelMessage, Output = { response: string }>(
-  config: AgentConfig<Context, Input, Output>,
-): Agent<Context, Input, Output> => {
+export const agent = <Context, Input = string | UserModelMessage, Output = { response: string }, Yield extends { type: string } = never>(
+  config: AgentConfig<Context, Input, Output, Yield>,
+): Agent<Context, Input, Output, Yield> => {
   const stopCondition = config.stopCondition ?? DEFAULT_STOP_CONDITION
 
   function internalRun(
@@ -64,8 +73,8 @@ export const agent = <Context, Input = string | UserModelMessage, Output = { res
     input: Input,
     context: Context,
     memory: Memory,
-    options: { abort?: AbortSignal; middleware?: Middleware<Context>[]; runId?: string } = {},
-  ): AgentResult<Context> {
+    options: { abort?: AbortSignal; middleware?: Middleware<Context, any>[]; runId?: string } = {},
+  ): AgentResult<Context, Yield> {
     // 2. Create an abort controller for this run
     // If an external signal was provided, wrap it so this run can be independently aborted
     const controller = new AbortController()
@@ -94,17 +103,28 @@ export const agent = <Context, Input = string | UserModelMessage, Output = { res
       widgetsPickerModel: config.widgetsPickerModel,
     }
 
-    // 5. Get inherited middlewares from ancestor context that want to descend into THIS agent
-    const inheritedMiddlewares = getMiddlewares<Context>().filter((m) => m.shouldDescendIntoAgent?.(self as unknown as Agent<Context>) ?? false)
+    // 5. Get inherited middleware entries from ancestor context that want to descend into THIS agent
+    const parentAgent = getCurrentAgent<Context>()
+    const inheritedEntries = getMiddlewareEntries<Context>().filter(({ middleware, origin }) =>
+      parentAgent
+        ? (middleware.shouldDescendIntoAgent?.({
+            origin,
+            parent: parentAgent,
+            candidate: self as unknown as Agent<Context>,
+          }) ?? false)
+        : false,
+    )
 
     // 6. Combine: inherited first (outermost), then agent's config, then run options (innermost)
     // Order matters for composition - first in array wraps outermost
     const ownMiddlewares = [...(config.middleware ?? []), ...(options.middleware ?? [])]
-    const allMiddlewares = [...inheritedMiddlewares, ...ownMiddlewares]
+    const ownEntries = ownMiddlewares.map((middleware) => ({ middleware, origin: self as unknown as Agent<Context> }))
+    const allEntries = [...inheritedEntries, ...ownEntries]
 
     // 7. Base function: returns an async generator
     // This runs inside the graph context
-    async function* base(ctx: AgentLoopContext<Context>): AgentMiddlewareResult<Context> {
+    // Uses `any` for Custom since middlewares with different custom yields compose together
+    async function* base(ctx: AgentLoopContext<Context>): AgentMiddlewareResult<Context, any> {
       // Wrap executeLoop so each iteration runs within agent node context
       // This is necessary because async generators are lazily evaluated
       const stream = wrapGeneratorWithNode(agentNode, executeLoop(ctx))
@@ -117,7 +137,29 @@ export const agent = <Context, Input = string | UserModelMessage, Output = { res
     }
 
     // 8. Compose middleware using handleAgent (reduceRight so first middleware wraps outermost)
-    const wrappedRun = allMiddlewares.reduceRight<typeof base>((next, mw) => (c) => (mw.handleAgent ? mw.handleAgent(c, next) : next(c)), base)
+    // Each layer wraps yielded events with metadata defaults (path, timestamp, nodeId, parentId)
+    // so that outer middlewares always see events with runtime context — even custom yields.
+    // Pattern: defaults first, then spread — existing fields from inner layers override.
+    const wrappedRun = allEntries.reduceRight<typeof base>(
+      (next, entry) =>
+        async function* (c): AgentMiddlewareResult<Context, any> {
+          const mw = entry.middleware
+          const gen = mw.handleAgent ? mw.handleAgent(c, next) : next(c)
+          let result = await gen.next()
+          while (!result.done) {
+            yield {
+              path: agentNode.path,
+              timestamp: performance.now(),
+              nodeId: agentNode.id,
+              parentId: agentNode.parent?.id,
+              ...result.value,
+            } as RuntimeYield<any>
+            result = await gen.next()
+          }
+          return result.value
+        },
+      base,
+    )
 
     // 9. Execute within middleware context and graph context
     // The allMiddlewares are now the "active middlewares" for this agent's subtree
@@ -127,18 +169,29 @@ export const agent = <Context, Input = string | UserModelMessage, Output = { res
     const parentNode = agentNode.parent
     const startGen = () => wrappedRun(loopContext)
     const baseStream = parentNode ? runWithNode(parentNode, startGen) : startGen()
-    const middlewareStream = wrapGeneratorWithMiddlewares(allMiddlewares, baseStream)
+    const middlewareStream = wrapGeneratorWithMiddlewares(allEntries, baseStream)
+    const agentStream = wrapGeneratorWithAgent(self as unknown as Agent<Context>, middlewareStream)
 
     // 10. Build ExecutionGraph from events and create context promise
     const graph = new ExecutionGraph()
     const contextPromise = new LazyPromise<AgentLoopContext<Context>>()
 
     // 11. Wrap the middleware stream to build graph and resolve promises on completion
-    const consumerStream: AsyncGenerator<RuntimeYield, void, unknown> = (async function* () {
-      let result: IteratorResult<RuntimeYield, { context: AgentLoopContext<Context> }>
-      while (!(result = await middlewareStream.next()).done) {
-        graph.processEvent(result.value)
-        yield result.value
+    // The middleware chain uses `any` for Custom internally; we inject metadata and narrow at the consumer boundary
+    // Injection pattern: defaults first, then spread event — existing fields (from next()) override defaults
+    const consumerStream: AsyncGenerator<WithMetadata<RuntimeYield<Yield>>, void, unknown> = (async function* () {
+      let result = await agentStream.next()
+      while (!result.done) {
+        const event = {
+          path: agentNode.path,
+          timestamp: performance.now(),
+          nodeId: agentNode.id,
+          parentId: agentNode.parent?.id,
+          ...result.value,
+        } as WithMetadata<RuntimeYield<Yield>>
+        graph.processEvent(event)
+        yield event
+        result = await agentStream.next()
       }
       // Stream completed - resolve the context promise
       contextPromise.resolve(result.value.context)
@@ -154,7 +207,7 @@ export const agent = <Context, Input = string | UserModelMessage, Output = { res
     }
   }
 
-  const self: Agent<Context, Input, Output> = {
+  const self: Agent<Context, Input, Output, Yield> = {
     __runner__: true,
     name: config.name,
     description: config.description,
@@ -193,7 +246,7 @@ export const agent = <Context, Input = string | UserModelMessage, Output = { res
               nodeId: agentNode.id,
               parentId: agentNode.parent?.id,
               ...(event as any),
-            } as RuntimeYield
+            } as WithMetadata<RuntimeYield<Yield>>
             next = await wrapped.next()
           }
 
@@ -229,7 +282,7 @@ export const agent = <Context, Input = string | UserModelMessage, Output = { res
      * Run the agent as the root agent.
      * Returns a result with stream, memory, graph, and node.
      */
-    run(input: Input, context: Context, options: AgentRunOptions = {}): AgentResult {
+    run(input: Input, context: Context, options: AgentRunOptions = {}): AgentResult<Context, Yield> {
       // Memory fallback chain: run options -> agent config -> new SimpleMemory
       const memory = options.memory ?? config.memory ?? new SimpleMemory()
 

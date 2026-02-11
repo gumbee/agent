@@ -34,7 +34,15 @@ export type { ExecutionGraphNode, ExecutionRootNode, ExecutionAgentNode, Executi
 // Middleware System
 // =============================================================================
 
-export type { Middleware, AgentMiddlewareContext, AgentMiddlewareResult, ToolMiddlewareContext, ToolMiddlewareResult } from "./runtime/middleware"
+export type {
+  Middleware,
+  AgentMiddlewareContext,
+  AgentMiddlewareResult,
+  AgentStepMiddlewareContext,
+  AgentStepMiddlewareResult,
+  ToolMiddlewareContext,
+  ToolMiddlewareResult,
+} from "./runtime/middleware"
 
 // =============================================================================
 // Memory
@@ -59,6 +67,9 @@ export type {
   RunnerEnvironment,
   // Yield types
   RuntimeYield,
+  WithMetadata,
+  YieldMetadata,
+  CustomYieldBase,
   AgentYield,
   ToolYield,
   AgentBeginYield,
@@ -66,6 +77,7 @@ export type {
   AgentStepBeginYield,
   AgentStepLLMCallYield,
   AgentStepEndYield,
+  AgentStepRetryYield,
   AgentErrorYield,
   AgentStreamYield,
   WidgetDeltaYield,
@@ -96,6 +108,7 @@ export {
   isAgentStepBegin,
   isAgentStepLLMCall,
   isAgentStepEnd,
+  isAgentStepRetry,
   isAgentError,
   isAgentStream,
   isWidgetDelta,

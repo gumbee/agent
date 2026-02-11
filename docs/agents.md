@@ -31,7 +31,7 @@ const myAgent = agent({
 | `execute`            | `fn`               | Optional custom execution logic (receives `run`, `input`, `context`, `env`)                  |
 | `tools`              | `Runner[]`         | Optional array of tools or agents the agent can use                                          |
 | `memory`             | `Memory`           | Optional default memory implementation                                                       |
-| `middleware`         | `Middleware[]`     | Optional array of middleware                                                                  |
+| `middleware`         | `Middleware[]`     | Optional array of middleware                                                                 |
 | `stopCondition`      | `StopCondition`    | Optional condition for when to stop the agent loop                                           |
 | `widgets`            | `DescribeRegistry` | Optional registry for rich widget outputs                                                    |
 | `widgetsPickerModel` | `LanguageModel`    | Optional model for widget schema selection                                                   |
@@ -105,11 +105,11 @@ console.log(ctx.model) // The model used
 
 The `run()` method returns:
 
-| Property  | Type                       | Description                                                     |
-| --------- | -------------------------- | --------------------------------------------------------------- |
-| `stream`  | `AsyncGenerator`           | Stream of runtime events                                        |
-| `memory`  | `Memory`                   | Memory instance used for this run                               |
-| `graph`   | `ExecutionGraph`           | Execution graph, populated as the stream is consumed            |
+| Property  | Type                        | Description                                                      |
+| --------- | --------------------------- | ---------------------------------------------------------------- |
+| `stream`  | `AsyncGenerator`            | Stream of runtime events                                         |
+| `memory`  | `Memory`                    | Memory instance used for this run                                |
+| `graph`   | `ExecutionGraph`            | Execution graph, populated as the stream is consumed             |
 | `context` | `Promise<AgentLoopContext>` | Promise that resolves to the agent context after stream finishes |
 
 ## Event Types
@@ -337,8 +337,8 @@ function logging(): Middleware {
       console.log(`Step ${c.step} using model:`, c.model.modelId)
       return yield* next(c)
     },
-    shouldDescendIntoAgent: (agent) => true, // Apply to sub-agents
-    shouldDescendIntoTool: (tool) => true, // Apply to tools
+    shouldDescendIntoAgent: (_info) => true, // Apply to sub-agents
+    shouldDescendIntoTool: (_info) => true, // Apply to descendant-agent tools
   }
 }
 ```

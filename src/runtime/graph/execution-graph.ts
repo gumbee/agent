@@ -7,7 +7,7 @@
  */
 
 import type { ModelMessage, JSONValue } from "ai"
-import type { AgentYield, RuntimeYield, ToolYield, ThinkingConfig } from "../types"
+import type { AgentYield, WithMetadata, YieldMetadata, RuntimeYield, ToolYield, ThinkingConfig } from "../types"
 
 // =============================================================================
 // Node Status
@@ -39,10 +39,17 @@ export interface ExecutionAgentNode extends ExecutionNodeBase {
   type: "agent"
   input?: unknown
   messages: ModelMessage[]
-  events: AgentYield[]
+  events: WithMetadata<AgentYield>[]
   modelId?: string
   provider?: string
-  usage?: { inputTokens: number; outputTokens: number; totalTokens: number }
+  models?: Array<{ step: number; modelId: string; provider: string; success?: boolean }>
+  usage?: {
+    inputTokens: number
+    outputTokens: number
+    totalTokens: number
+    cacheReadTokens?: number
+    cacheWriteTokens?: number
+  }
   thinking?: ThinkingConfig
 }
 
@@ -51,13 +58,13 @@ export interface ExecutionToolNode extends ExecutionNodeBase {
   type: "tool"
   input?: unknown
   output?: unknown
-  events: ToolYield[]
+  events: WithMetadata<ToolYield>[]
 }
 
 /** Unknown node -- tracks events for an unknown node */
 export interface ExecutionUnknownNode extends ExecutionNodeBase {
   type: "unknown"
-  events: RuntimeYield[]
+  events: WithMetadata<RuntimeYield<any>>[]
 }
 
 /** Union of all graph node types */
@@ -82,6 +89,7 @@ export type ExecutionGraphNode = ExecutionRootNode | ExecutionAgentNode | Execut
 export class ExecutionGraph {
   private nodeMap = new Map<string, ExecutionGraphNode>()
   private _root: ExecutionRootNode | null = null
+  private _nodeStepMap = new Map<string, number>()
 
   /** Get the root node */
   get root(): ExecutionRootNode | null {
@@ -94,7 +102,7 @@ export class ExecutionGraph {
   }
 
   /** Process a single event, updating the graph */
-  processEvent(event: RuntimeYield): void {
+  processEvent(event: WithMetadata<RuntimeYield<any>>): void {
     switch (event.type) {
       case "agent-begin": {
         const agentNode = this.ensureAgentNode(event.nodeId, event.parentId)
@@ -123,6 +131,7 @@ export class ExecutionGraph {
         const node = this.ensureAgentNode(event.nodeId)
         node.status = "completed"
         node.events.push(event)
+        this._nodeStepMap.delete(event.nodeId)
         // Also mark root as completed if this is the root agent
         if (this._root && this._root.children[0]?.id === event.nodeId) {
           this._root.status = "completed"
@@ -135,6 +144,7 @@ export class ExecutionGraph {
         node.status = "failed"
         node.error = { message: event.error.message, stack: event.error.stack }
         node.events.push(event)
+        this._nodeStepMap.delete(event.nodeId)
         // Also mark root as failed if this is the root agent
         if (this._root && this._root.children[0]?.id === event.nodeId) {
           this._root.status = "failed"
@@ -145,8 +155,15 @@ export class ExecutionGraph {
       case "agent-step-llm-call": {
         const node = this.ensureAgentNode(event.nodeId)
         node.events.push(event)
-        node.modelId = event.modelId
-        node.provider = event.provider
+        if (!node.modelId) {
+          node.modelId = event.modelId
+          node.provider = event.provider
+        }
+        const step = this._nodeStepMap.get(event.nodeId) ?? 0
+        if (!node.models) {
+          node.models = []
+        }
+        node.models.push({ step, modelId: event.modelId, provider: event.provider })
         if (event.providerOptions) {
           node.thinking = normalizeThinking(event.providerOptions)
         }
@@ -158,16 +175,26 @@ export class ExecutionGraph {
         node.events.push(event)
         if (event.part.type === "finish-step" && event.part.usage) {
           const usage = event.part.usage
+          const cacheRead = usage.inputTokenDetails?.cacheReadTokens
+          const cacheWrite = usage.inputTokenDetails?.cacheWriteTokens
           node.usage = {
             inputTokens: (node.usage?.inputTokens ?? 0) + (usage.inputTokens ?? 0),
             outputTokens: (node.usage?.outputTokens ?? 0) + (usage.outputTokens ?? 0),
             totalTokens: (node.usage?.totalTokens ?? 0) + (usage.totalTokens ?? 0),
+            cacheReadTokens: cacheRead != null ? (node.usage?.cacheReadTokens ?? 0) + cacheRead : node.usage?.cacheReadTokens,
+            cacheWriteTokens: cacheWrite != null ? (node.usage?.cacheWriteTokens ?? 0) + cacheWrite : node.usage?.cacheWriteTokens,
           }
         }
         break
       }
 
-      case "agent-step-begin":
+      case "agent-step-begin": {
+        const node = this.ensureAgentNode(event.nodeId)
+        node.events.push(event)
+        this._nodeStepMap.set(event.nodeId, event.step)
+        break
+      }
+
       case "widget-delta": {
         const node = this.ensureAgentNode(event.nodeId)
         node.events.push(event)
@@ -177,6 +204,10 @@ export class ExecutionGraph {
       case "agent-step-end": {
         const node = this.ensureAgentNode(event.nodeId)
         node.events.push(event)
+        const lastModel = node.models?.at(-1)
+        if (lastModel) {
+          lastModel.success = true
+        }
         // Store appended messages on agent node
         if (event.appended) {
           node.messages = [...node.messages, ...event.appended]
@@ -214,12 +245,21 @@ export class ExecutionGraph {
         break
       }
 
-      default: {
-        console.log("Unknown event type:", JSON.stringify(event, null, 2))
+      case "agent-step-retry": {
+        const node = this.ensureAgentNode(event.nodeId)
+        node.events.push(event)
+        const lastModel = node.models?.at(-1)
+        if (lastModel) {
+          lastModel.success = false
+        }
+        break
+      }
 
-        const unknownEvent = event as { type: string; nodeId?: string; toolCallId?: string; parentId?: string }
-        const id = unknownEvent.nodeId || unknownEvent.toolCallId || "unknown"
-        const parentId = unknownEvent.parentId
+      default: {
+        // Handle custom yield types (any yield with nodeId gets attached to its agent node)
+        const customEvent = event as YieldMetadata & { toolCallId?: string }
+        const id = customEvent.nodeId || customEvent.toolCallId || "unknown"
+        const parentId = customEvent.parentId
         const node = this.ensureNode(id, parentId)
 
         node.events.push(event)
@@ -360,8 +400,19 @@ function normalizeThinking(providerOptions: Record<string, Record<string, JSONVa
 
   if (providerOptions.google?.thinkingConfig && typeof providerOptions.google.thinkingConfig === "object") {
     const thinkingConfig = providerOptions.google.thinkingConfig as Record<string, JSONValue>
-    if (thinkingConfig.includeThoughts) {
-      return { enabled: true, budgetTokens: thinkingConfig.thinkingBudget as number }
+    if (thinkingConfig.includeThoughts || typeof thinkingConfig.thinkingBudget === "number") {
+      const budget = (thinkingConfig.thinkingBudget as number) ?? 0
+      let level: "minimal" | "low" | "medium" | "high" = "minimal"
+
+      if (budget >= 4096) {
+        level = "high"
+      } else if (budget >= 1024) {
+        level = "medium"
+      } else if (budget >= 300) {
+        level = "low"
+      }
+
+      return { enabled: true, budgetTokens: budget, level }
     }
   }
 

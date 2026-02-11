@@ -5,22 +5,34 @@ import type { AgentStepMiddlewareContext, AgentStepMiddlewareResult, Middleware 
 import { convertRunnersForAI } from "./tool"
 import { createWidgetSchemaTool } from "./tool-definitions/widget-schema-tool"
 import { transformWidgetStream } from "./widgets-transform"
-import type { RuntimeYield, Runner, AgentLoopContext, FinishReason } from "./types"
+import type { WithMetadata, RuntimeYield, Runner, AgentLoopContext, FinishReason } from "./types"
 
 /** Check if an item is a RuntimeYield event (from sub-agent/tool queue) vs a base stream part */
-function isRuntimeYield(item: unknown): item is RuntimeYield {
+function isRuntimeYield(item: unknown): item is WithMetadata<RuntimeYield> {
   return typeof item === "object" && item !== null && "path" in item && "timestamp" in item
+}
+
+/** Re-throw underlying stream errors so middleware sees original provider errors. */
+async function* throwOnStreamError<T extends { type: string }>(stream: AsyncIterable<T>): AsyncGenerator<T> {
+  for await (const item of stream) {
+    if (item.type === "error" && "error" in item) {
+      const originalError = item.error
+      throw originalError instanceof Error ? originalError : new Error(String(originalError))
+    }
+    yield item
+  }
 }
 
 /**
  * Compose step middleware chain.
  * Reduces middlewares right-to-left so first middleware wraps outermost.
+ * Uses `any` for Custom since middlewares with different custom yields compose together.
  */
 function composeStepMiddleware<Context>(
-  middlewares: Middleware<Context>[],
-  base: (c: AgentStepMiddlewareContext<Context>) => AgentStepMiddlewareResult,
-): (c: AgentStepMiddlewareContext<Context>) => AgentStepMiddlewareResult {
-  return middlewares.reduceRight<(c: AgentStepMiddlewareContext<Context>) => AgentStepMiddlewareResult>(
+  middlewares: Middleware<Context, any>[],
+  base: (c: AgentStepMiddlewareContext<Context>) => AgentStepMiddlewareResult<any>,
+): (c: AgentStepMiddlewareContext<Context>) => AgentStepMiddlewareResult<any> {
+  return middlewares.reduceRight<(c: AgentStepMiddlewareContext<Context>) => AgentStepMiddlewareResult<any>>(
     (next, mw) => (c) => (mw.handleAgentStep ? mw.handleAgentStep(c, next) : next(c)),
     base,
   )
@@ -30,7 +42,7 @@ function composeStepMiddleware<Context>(
  * Execute a single LLM step. This is the base function that middleware wraps.
  * Emits agent-step-llm-call event, streams the response, stores messages, and returns the finish reason.
  */
-async function* executeStep<Context>(c: AgentStepMiddlewareContext<Context>): AgentStepMiddlewareResult {
+async function* executeStep<Context>(c: AgentStepMiddlewareContext<Context>): AgentStepMiddlewareResult<any> {
   const { path, nodeId, model, tools: baseTools, widgets, widgetsPickerModel, providerOptions, env, context, memory } = c
 
   // Collect all tools including widget schema tool (uses c.model which may be modified by middleware)
@@ -92,7 +104,8 @@ async function* executeStep<Context>(c: AgentStepMiddlewareContext<Context>): Ag
   // Use mergeStreamWithQueue to properly interleave tool events with stream events in real-time
   // Queue is automatically closed when the stream completes
   const baseStream = hasWidgets ? transformWidgetStream(result.fullStream, widgets!) : result.fullStream
-  const mergedStream = mergeStreamWithQueue(baseStream, toolEventQueue)
+  const errorHandledStream = throwOnStreamError(baseStream)
+  const mergedStream = mergeStreamWithQueue(errorHandledStream, toolEventQueue)
 
   for await (const item of mergedStream) {
     // Check if this is a runtime yield from the queue (has 'path' and 'timestamp')
@@ -142,7 +155,7 @@ async function* executeStep<Context>(c: AgentStepMiddlewareContext<Context>): Ag
  * Keeps JSX prompt enhancement and widget support while using the simplified
  * graph-based trace system.
  */
-export async function* executeLoop<Context>(data: AgentLoopContext<Context>): AsyncGenerator<RuntimeYield, void, unknown> {
+export async function* executeLoop<Context>(data: AgentLoopContext<Context>): AsyncGenerator<RuntimeYield<any>, void, unknown> {
   const { system, tools, context, env, memory, widgets, widgetsPickerModel, model, providerOptions, stopCondition } = data
   // Get current node from context
   const node = getCurrentNode()
@@ -207,11 +220,18 @@ export async function* executeLoop<Context>(data: AgentLoopContext<Context>): As
       }
 
       // Execute step through middleware chain, yielding all events
+      // Injection pattern: defaults first, then spread event — existing fields (from next()) override defaults
+      // This ensures custom middleware yields get path/timestamp/nodeId injected automatically
       const stepStream = wrappedStep(stepContext)
-      let stepResult: IteratorResult<RuntimeYield, FinishReason>
+      let stepResult: IteratorResult<RuntimeYield<any>, FinishReason>
 
       while (!(stepResult = await stepStream.next()).done) {
-        yield stepResult.value
+        yield {
+          path,
+          timestamp: performance.now(),
+          nodeId,
+          ...stepResult.value,
+        }
       }
 
       // Get finish reason and appended messages for step-end event

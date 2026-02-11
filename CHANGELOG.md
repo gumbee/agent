@@ -1,5 +1,15 @@
 # @gumbee/agent
 
+## 1.3.0
+
+### Minor Changes
+
+- allow custom yields in middlewares to support domain specific events
+- allow richer middleware descent conditions
+- track usage per agent node
+- track used models per agent node
+- handle metadata injection into yielded events automatically
+
 ## 1.2.0
 
 ### Minor Changes
