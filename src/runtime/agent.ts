@@ -30,6 +30,7 @@ import {
   type AgentLoopContext,
   type AgentResult,
   type AgentRunOptions,
+  type ExtractMiddlewareYield,
   type WithMetadata,
   LazyPromise,
   type RunnerEnvironment,
@@ -63,9 +64,16 @@ function isAsyncGenerator<T, R>(value: AsyncGenerator<T, R> | Promise<R>): value
  * }
  * ```
  */
-export const agent = <Context, Input = string | UserModelMessage, Output = { response: string }, Yield extends { type: string } = never>(
-  config: AgentConfig<Context, Input, Output, Yield>,
-): Agent<Context, Input, Output, Yield> => {
+export const agent = <
+  Context,
+  Input = string | UserModelMessage,
+  Output = { response: string },
+  const M extends readonly Middleware<Context, any>[] = [],
+>(
+  config: AgentConfig<Context, Input, Output, M>,
+): Agent<Context, Input, Output, ExtractMiddlewareYield<M[number]>> => {
+  type Yield = ExtractMiddlewareYield<M[number]>
+
   const stopCondition = config.stopCondition ?? DEFAULT_STOP_CONDITION
 
   function internalRun(

@@ -116,7 +116,6 @@ export type AgentYield =
   | AgentErrorYield
   | AgentStreamYield
   | WidgetDeltaYield
-  | AgentStepRetryYield
 
 // =============================================================================
 // Runtime Yield (union of all event types)
@@ -125,6 +124,9 @@ export type AgentYield =
 // Combined yields for agent execution (agents can yield both agent and tool events)
 // Generic `Custom` parameter allows extending with user-defined yield types
 export type RuntimeYield<Custom extends { type: string } = never> = AgentYield | ToolYield | Custom
+
+/** Extract the Custom yield type from a Middleware instance */
+export type ExtractMiddlewareYield<M> = M extends Middleware<any, infer Y> ? Y : never
 
 // Helper types for extracting tool call/result info from AgentStreamYield parts
 /** Tool call info extracted from agent-stream parts (type: "tool-call") */
@@ -215,7 +217,7 @@ export type StopConditionInfo = {
 export type StopCondition = (info: StopConditionInfo) => boolean | Promise<boolean>
 export type SystemPrompt<Context = {}> = string | ((context: Context) => Promise<string> | string)
 
-export type AgentConfig<Context = {}, Input = string, Output = { response: string }, Yield extends { type: string } = never> = {
+export type AgentConfig<Context = {}, Input = string, Output = { response: string }, Middlewares extends readonly Middleware<Context, any>[] = []> = {
   name: string
   description: string
   /** System prompt - can be string or function of context */
@@ -232,12 +234,12 @@ export type AgentConfig<Context = {}, Input = string, Output = { response: strin
     input: Input,
     context: Context,
     env: RunnerEnvironment,
-  ) => AsyncGenerator<Yield, Output> | Promise<Output>
+  ) => AsyncGenerator<ExtractMiddlewareYield<Middlewares[number]>, Output> | Promise<Output>
   model: LanguageModel
   /** Optional default memory (can be overridden via run options) */
   memory?: Memory
   /** Optional default middleware (can be extended via run options) */
-  middleware?: Middleware<Context, any>[]
+  middleware?: readonly [...Middlewares]
   tools?: Runner<Context>[]
   stopCondition?: StopCondition
   /** Widget registry for rich UI responses */

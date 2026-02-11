@@ -1,5 +1,11 @@
 # @gumbee/agent
 
+## 1.3.1
+
+### Patch Changes
+
+- infer yield types from middlewares in agents
+
 ## 1.3.0
 
 ### Minor Changes

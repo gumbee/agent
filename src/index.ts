@@ -67,6 +67,7 @@ export type {
   RunnerEnvironment,
   // Yield types
   RuntimeYield,
+  ExtractMiddlewareYield,
   WithMetadata,
   YieldMetadata,
   CustomYieldBase,

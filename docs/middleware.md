@@ -150,10 +150,22 @@ export function pervasiveMiddleware(): Middleware {
   return {
     // ... handlers ...
 
-    // Apply to all sub-agents called by this agent
+    // Apply to all sub-agents
     shouldDescendIntoAgent: (info) => true,
 
-    // Apply to all tools called by this agent
+    // Apply to all tools called by sub-agents
+    shouldDescendIntoTool: (info) => true,
+  }
+}
+
+export function twoLayerMiddleware(): Middleware {
+  return {
+    // ... handlers ...
+
+    // Apply to all immediate sub-agents
+    shouldDescendIntoAgent: (info) => info.parent === info.origin,
+
+    // Apply to all tools called by sub-agents we descended into
     shouldDescendIntoTool: (info) => true,
   }
 }
@@ -178,20 +190,6 @@ The `info` parameter provides context about the propagation decision:
 | `candidate` | `Tool`  | The candidate tool being considered for descent         |
 
 This gives you fine-grained control over which sub-agents and tools a middleware applies to:
-
-```typescript
-export function selectiveMiddleware(): Middleware {
-  return {
-    // ... handlers ...
-
-    // Only descend into sub-agents named "helper"
-    shouldDescendIntoAgent: (info) => info.candidate.name === "helper",
-
-    // Only descend into tools when the parent is the origin agent
-    shouldDescendIntoTool: (info) => info.parent === info.origin,
-  }
-}
-```
 
 ## Custom Yields
 
