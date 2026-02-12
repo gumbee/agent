@@ -1,6 +1,6 @@
 {
   "name": "@gumbee/agent",
-  "version": "1.3.1",
+  "version": "1.4.0",
   "description": "Agent framework with rich widget and middleware support",
   "author": "Gumbee <mugeeb.hassan@gmail.com>",
   "license": "MIT",
@@ -41,7 +41,20 @@
         "default": "./dist/graph.cjs"
       }
     },
+    "./observability": {
+      "import": {
+        "types": "./dist/observability.d.ts",
+        "default": "./dist/observability.js"
+      },
+      "require": {
+        "types": "./dist/observability.d.cts",
+        "default": "./dist/observability.cjs"
+      }
+    },
     "./package.json": "./package.json"
+  },
+  "bin": {
+    "observe": "./dist/observability/cli.js"
   },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -52,7 +65,7 @@
   ],
   "sideEffects": false,
   "scripts": {
-    "build": "bunup",
+    "build": "bunup && cd src/observability/dashboard && bun install && bun run build",
     "dev": "bunup --watch",
     "type-check": "tsc --noEmit",
     "lint": "eslint src/",
@@ -62,8 +75,15 @@
     "version": "changeset version"
   },
   "dependencies": {
+    "@hono/node-server": "^1.14.0",
+    "@hono/node-ws": "^1.1.0",
+    "hono": "^4.7.0",
+    "lib0": "^0.2.85",
     "@gumbee/structured": "^1.0.0",
-    "@gumbee/prompt": "^1.0.0"
+    "@gumbee/prompt": "^1.0.0",
+    "y-protocols": "^1.0.7",
+    "y-websocket": "^2.0.0",
+    "yjs": "^13.6.0"
   },
   "devDependencies": {
     "@changesets/cli": "^2.29.8",

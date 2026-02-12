@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+@theme {
+  --color-primary: #000000;
+  --color-surface: #ffffff;
+  --color-surface-highlight: #fafafa;
+  --color-border-subtle: #f1f1f1;
+  --color-border-strong: #e5e5e5;
+  --color-text-main: #1a1a1a;
+  --color-text-secondary: #888888;
+  --color-success: #22c55e;
+  --color-error: #ef4444;
+  --color-warning: #eab308;
+
+  --font-display: "Inter", sans-serif;
+  --font-mono: "ui-monospace", "SFMono-Regular", "Menlo", "Monaco", "Consolas", "Liberation Mono", "Courier New", "monospace";
+
+  --shadow-soft: 0 4px 20px -2px rgba(0, 0, 0, 0.02);
+  --shadow-float: 0 20px 40px -4px rgba(0, 0, 0, 0.04);
+  --shadow-pill: 0 10px 30px -5px rgba(0, 0, 0, 0.04);
+  --shadow-node: 0 2px 8px rgba(0, 0, 0, 0.03);
+
+  --animate-dash: dash 1s linear infinite;
+
+  @keyframes dash {
+    to {
+      stroke-dashoffset: -6;
+    }
+  }
+}
+
+button {
+  cursor: pointer;
+}
+
+/* Override default xyflow node styling */
+.svelte-flow__node,
+.svelte-flow__node-default,
+.svelte-flow__node-input,
+.svelte-flow__node-output,
+.svelte-flow__node-group {
+  border: none !important;
+  padding: 0 !important;
+  background: transparent !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  width: auto !important;
+}
+
+/* Utility classes */
+@layer utilities {
+  .graph-bg {
+    background-color: #ffffff;
+    background-image: radial-gradient(#e5e5e5 1px, transparent 1px);
+    background-size: 24px 24px;
+  }
+
+  .graph-gradient {
+    background: radial-gradient(circle at center, rgba(255, 255, 255, 0) 0%, rgba(255, 255, 255, 0.8) 100%);
+  }
+
+  .scrollbar-hide::-webkit-scrollbar {
+    width: 0px;
+    background: transparent;
+  }
+
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}

@@ -32,17 +32,34 @@ Related Documentation
 - **Rich Widgets** — Stream structured widget outputs for dynamic UI rendering
 - **Execution Graph** — Full execution tracking for debugging and persistence
 - **Provider Agnostic** — Works with OpenAI, Anthropic, Google, and any AI SDK provider
+- **Observability** - Observability dashboard for debugging agents shipped with the @gumbee/agent package
+
+</br>
+
+---
+
+</br>
+
+![AgentDashboard](./docs/assets/AgentDashboardDemo0.gif)
 
 ## Installation
 
-```bash
-npm install @gumbee/agent ai
-```
+1. Install `@gumbee/agent` package and make sure peer dependency `ai` is installed as well
+
+   ```bash
+   bun add @gumbee/agent ai
+   ```
+
+2. Install any ai-sdk providers you'd like to use (check [Vercel docs](https://ai-sdk.dev/docs/introduction) for more info on the ai sdk)
+   ```bash
+   bun add @ai-sdk/openai # @ai-sdk/google @ai-sdk/anthropic
+   ```
 
 ## Quick Start
 
 ```typescript
 import { agent, tool, z } from "@gumbee/agent"
+import { observability } from "@gumbee/agent/observability"
 import { openai } from "@ai-sdk/openai"
 
 // Define a tool
@@ -55,13 +72,14 @@ const searchTool = tool({
   },
 })
 
-// Create an agent
+// Create an agent with observability enabled
 const myAgent = agent({
   name: "assistant",
   description: "A helpful assistant",
   model: openai("gpt-4o"),
   system: "You are a helpful assistant.",
   tools: [searchTool],
+  middlewares: [observability()],
 })
 
 // Run the agent
@@ -72,6 +90,15 @@ for await (const event of stream) {
     process.stdout.write(event.part.textDelta)
   }
 }
+```
+
+Start the observability dashboard before running your agent:
+
+```bash
+# Start the observability dashboard server (default port: 4500)
+bunx observe
+
+# Open the dashboard in your browser at http://localhost:4500
 ```
 
 ## Development

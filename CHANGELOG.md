@@ -1,5 +1,11 @@
 # @gumbee/agent
 
+## 1.4.0
+
+### Minor Changes
+
+- added observability dashboard to agent package
+
 ## 1.3.1
 
 ### Patch Changes

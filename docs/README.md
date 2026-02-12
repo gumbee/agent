@@ -11,6 +11,7 @@ A powerful agent framework with built-in middleware, execution graphs, and rich 
 - **[Context](./context.md)** - Application context, dynamic system prompts, and per-request data
 - **[Middleware](./middleware.md)** - Composable middleware for logging, fallbacks, caching, and more
 - **[Tracing](./tracing.md)** - Execution graph tracking for debugging and persistence
+- **[Observability](./observability.md)** - Real-time dashboard for inspecting agent traces and events
 
 ## Quick Start
 
