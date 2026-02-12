@@ -20,6 +20,7 @@ Related Documentation
 [Stop Conditions](docs/stop-conditions.md) •
 [Context](docs/context.md) •
 [Middleware](docs/middleware.md) •
+[Observability](docs/observability.md) •
 [Tracing](docs/tracing.md)
 
 </div>
@@ -40,7 +41,7 @@ Related Documentation
 
 </br>
 
-![AgentDashboard](/docs/assets/AgentDashboardDemo0.gif)
+![AgentDashboard](https://raw.githubusercontent.com/gumbee/agent/main/docs/assets/AgentDashboardDemo0.gif)
 
 ## Installation
 
