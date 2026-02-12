@@ -1,36 +1,118 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# @gumbee/agent React Basic Example
+
+A minimal Next.js chat app that demonstrates the core `@gumbee/agent` flow: creating an agent, defining typed tools, injecting runtime context, streaming responses over SSE, and persisting chat history in memory.
+
+## Features
+
+- Agent configured with model, system prompt, tools, and observability middleware
+- Typed tools with schema-validated inputs (`get_weather`, `search_web`, `get_user_benefits`)
+- Typed user context (`ChatAgentContext`) passed to the agent and tools
+- Streaming runtime events from server to client via SSE
+- In-memory chat history using `SimpleMemory`
+- Frontend chat state with Zustand and incremental streaming updates
+
+## Prerequisites
+
+- Node.js `>= 18`
+- An OpenAI API key
 
 ## Getting Started
 
-First, run the development server:
+1. Install dependencies:
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+   ```bash
+   bun install
+   ```
+
+2. Create an environment file:
+
+   ```bash
+   cp .env.example .env.local
+   ```
+
+3. Add your API key in `.env.local`:
+
+   ```bash
+   OPENAI_API_KEY=your_openai_api_key_here
+   ```
+
+4. Start the dev server:
+
+   ```bash
+   bun run dev
+   ```
+
+5. Open `http://localhost:3000`
+
+## Project Structure
+
+```text
+.
+├── app/
+│   ├── api/chats/route.ts
+│   ├── api/chats/[chatId]/messages/route.ts
+│   └── page.tsx
+├── components/
+│   ├── ChatInput.tsx
+│   ├── ChatMessage.tsx
+│   └── SuggestionTags.tsx
+└── features/
+    ├── backend/
+    │   ├── agent/
+    │   │   ├── agent.ts
+    │   │   ├── context.ts
+    │   │   ├── sse.ts
+    │   │   └── tools/
+    │   ├── chat/db.ts
+    │   └── sse/index.ts
+    └── chat/
+        ├── sse.ts
+        └── store/
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Key Concepts
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 1) Create an agent
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```ts
+export const chatAgent = agent({
+  name: "support-agent",
+  model: openai("gpt-4o-mini"),
+  tools: [weatherTool, searchTool, userBenefitsTool],
+  middleware: [observability()],
+})
+```
 
-## Learn More
+### 2) Define typed tools
 
-To learn more about Next.js, take a look at the following resources:
+```ts
+export const weatherTool = tool({
+  name: "get_weather",
+  input: z.object({ city: z.string() }),
+  execute: async ({ city }) => ({ city, temperatureC: 22, conditions: "Sunny" }),
+})
+```
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+### 3) Use runtime context in tools
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+```ts
+execute: async ({ request }, context: ChatAgentContext) => {
+  const isVipUser = context.user.name.trim().toLowerCase() === "john doe"
+  // Return personalized guidance based on user context
+}
+```
 
-## Deploy on Vercel
+### 4) Run with memory and stream over SSE
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```ts
+const { stream, memory } = chatAgent.run(prompt, context, {
+  memory: new SimpleMemory(chat.messages),
+})
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+The API route streams events as they are produced and appends generated messages back into the chat record when the stream ends.
+
+## Notes
+
+- This example uses in-memory storage for chat records (`features/backend/chat/db.ts`).
+- Tool implementations are intentionally mocked to keep the example focused on runtime and UI flow.

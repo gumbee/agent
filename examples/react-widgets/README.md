@@ -1,36 +1,129 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# @gumbee/agent React Widgets Example
+
+A Next.js chat app that demonstrates the `@gumbee/agent` widget system. Instead of plain text responses, the agent emits structured, typed widgets that render into rich UI components.
+
+## Features
+
+- Agent configured with `widgets` via `DescribeRegistry`
+- System prompt enforces widget-first responses
+- Zod-based widget schemas with `.alias()` and `.flexible()` normalization
+- Utility shared type (`Symptom`) reused across multiple widgets
+- Domain widgets:
+  - `TextWidget`
+  - `MedicationDetailWidget`
+  - `MedicationListWidget`
+  - `SymptomListWidget`
+- Stream-safe rendering with `DeepPartial` widget payloads
+- Same chat/runtime foundation as the basic example (SSE, memory, tools, observability)
+
+## Prerequisites
+
+- Node.js `>= 18`
+- An OpenAI API key
 
 ## Getting Started
 
-First, run the development server:
+1. Install dependencies:
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+   ```bash
+   bun install
+   ```
+
+2. Create an environment file:
+
+   ```bash
+   cp .env.example .env.local
+   ```
+
+3. Add your API key in `.env.local`:
+
+   ```bash
+   OPENAI_API_KEY=your_openai_api_key_here
+   ```
+
+4. Start the dev server:
+
+   ```bash
+   bun run dev
+   ```
+
+5. Open `http://localhost:3000`
+
+## Project Structure
+
+```text
+.
+├── app/
+│   ├── api/chats/route.ts
+│   ├── api/chats/[chatId]/messages/route.ts
+│   └── page.tsx
+├── components/
+│   ├── ChatInput.tsx
+│   ├── ChatMessage.tsx
+│   └── widgets/
+│       ├── Widgets.tsx
+│       ├── TextWidget.tsx
+│       ├── MedicationDetailWidget.tsx
+│       ├── MedicationListWidget.tsx
+│       ├── SymptomListWidget.tsx
+│       └── types.ts
+└── features/
+    ├── backend/
+    │   └── agent/agent.ts
+    └── widgets/
+        ├── index.ts
+        └── helpers.ts
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Key Concepts
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+### 1) Define widget schemas
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```ts
+export const TextWidget = z.object({
+  type: normalizedTypeName("text"),
+  text: z.string().alias(["content", "value", "body"]),
+})
+```
 
-## Learn More
+Widget types are schema-first and made to conform the schema (if possible) before rendering.
 
-To learn more about Next.js, take a look at the following resources:
+### 2) Register widgets with `DescribeRegistry`
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```ts
+const chatWidgets = new DescribeRegistry()
+  .add(Symptom, { id: "Symptom", utility: true })
+  .add(TextWidget, { id: "Text", always: true // always pass text widget definition to agent (others are dynamically picked) })
+  .add(MedicationDetailWidget, { id: "MedicationDetail" })
+  .add(MedicationListWidget, { id: "MedicationList" })
+  .add(SymptomListWidget, { id: "SymptomList" })
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+- `utility: true` shares a type without treating it as a top-level rendered widget.
+- `always: true` makes sure the given type is always provided to the agent (higher LLM token usage)
 
-## Deploy on Vercel
+### 3) Attach widgets to the agent
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+```ts
+export const chatAgent = agent({
+  model: openai("gpt-4o-mini"),
+  tools: [weatherTool, searchTool, userBenefitsTool],
+  widgets: chatWidgets,
+  middleware: [observability()],
+})
+```
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+### 4) Render streamed widget payloads
+
+```tsx
+type WidgetsProps = {
+  widget: DeepPartial<UiChatWidget>
+}
+```
+
+During streaming, partial widget objects can arrive before the full payload is complete. `DeepPartial` allows progressive rendering without type errors. Using utilites from `@gumbee/structured` you can also check at runtime if a given field is completed or still streaming. Check the [@gumbee/structured](https://github.com/gumbee/structured) package for more details
+
+## Notes
+
+- Widget schemas use helper normalization (`normalize`, `normalizedTypeName`) so common alias formats are accepted.
+- This is ideal when you want strongly typed, component-driven responses rather than free-form text output.
