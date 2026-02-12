@@ -5,6 +5,8 @@ The observability system provides a real-time dashboard for inspecting agent exe
 1. **Dashboard server** -- a local web UI that visualises traces, events, and the agent execution graph.
 2. **Observability middleware** -- a middleware that streams every runtime event from your agent to the dashboard server.
 
+https://github.com/user-attachments/assets/6a2f42b3-ff47-4199-98d2-8f6ba8a43e95
+
 ## Running the Dashboard
 
 The dashboard ships as part of `@gumbee/agent` and can be launched with a single command. No extra installation is required.
