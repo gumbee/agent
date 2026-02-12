@@ -1,4 +1,4 @@
-import type { RuntimeYield } from "../runtime/types"
+import type { RuntimeYield, WithMetadata } from "../runtime/types"
 
 export type TraceStatus = "pending" | "running" | "completed" | "failed"
 
@@ -30,5 +30,5 @@ export interface AddEventsPayload {
 export interface StoredEvent {
   index: number
   ts: number
-  data: RuntimeYield
+  data: WithMetadata<RuntimeYield>
 }

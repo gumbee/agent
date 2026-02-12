@@ -234,7 +234,7 @@ export type AgentConfig<Context = {}, Input = string, Output = { response: strin
     input: Input,
     context: Context,
     env: RunnerEnvironment,
-  ) => AsyncGenerator<ExtractMiddlewareYield<Middlewares[number]>, Output> | Promise<Output>
+  ) => AsyncGenerator<WithMetadata<RuntimeYield<ExtractMiddlewareYield<Middlewares[number]>>>, Output> | Promise<Output>
   model: LanguageModel
   /** Optional default memory (can be overridden via run options) */
   memory?: Memory

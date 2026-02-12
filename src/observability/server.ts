@@ -1,5 +1,4 @@
-import { serve } from "@hono/node-server"
-import { type Server } from "node:http"
+import { serve, type ServerType } from "@hono/node-server"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { createNodeWebSocket } from "@hono/node-ws"
@@ -10,7 +9,7 @@ import * as Y from "yjs"
 import { getYDoc, setupWS, handleMessage } from "./yjs-sync"
 import type { AddEventsPayload, CreateTracePayload, TraceInfo } from "./types"
 
-export function startDashboard(options: { port?: number } = {}): Server {
+export function startDashboard(options: { port?: number } = {}): ServerType {
   const dashboardDir = path.join(path.dirname(fileURLToPath(import.meta.url)), "dashboard")
   const port = options.port || 4500
   const app = new Hono()

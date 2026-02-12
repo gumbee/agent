@@ -1,5 +1,11 @@
 # @gumbee/agent
 
+## 1.4.1
+
+### Patch Changes
+
+- improve typesafety for execute method yields
+
 ## 1.4.0
 
 ### Minor Changes

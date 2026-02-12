@@ -26,5 +26,6 @@
     "jsx": "react-jsx",
     "jsxImportSource": "@gumbee/prompt"
   },
-  "include": ["src/**/*"]
+  "include": ["src/**/*"],
+  "exclude": ["src/observability/dashboard/**/*"]
 }
