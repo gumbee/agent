@@ -1,6 +1,20 @@
 <script lang="ts">
   import HeadlessToolNode from "./headless/ToolNode.svelte"
-  import { AlertCircle, Check, CreditCard, RefreshCw, Search, Wrench } from "@lucide/svelte"
+  import {
+    AlertCircle,
+    Braces,
+    Check,
+    CreditCard,
+    Database,
+    FileJson,
+    Globe,
+    LayoutGrid,
+    MessageSquare,
+    RefreshCw,
+    Search,
+    ShieldCheck,
+    Wrench,
+  } from "@lucide/svelte"
   import { fade } from "svelte/transition"
   import { formatDuration } from "$lib/utils/format"
   import RunningTimer from "./RunningTimer.svelte"
@@ -10,11 +24,18 @@
 
   const hovered = $derived(selection.hoveredNodeId === data.nodeData.id)
 
-  // Helper to pick an icon based on tool name
+  // Pick an icon by matching common tool naming patterns.
   function getIcon(name: string) {
     const n = name.toLowerCase()
-    if (n.includes("stripe") || n.includes("payment") || n.includes("card")) return CreditCard
-    if (n.includes("search") || n.includes("find") || n.includes("query")) return Search
+    if (n.includes("widget") || n.includes("ui") || n.includes("component")) return LayoutGrid
+    if (n.includes("schema") || n.includes("json") || n.includes("parse")) return FileJson
+    if (n.includes("validate") || n.includes("type") || n.includes("zod")) return Braces
+    if (n.includes("db") || n.includes("database") || n.includes("sql") || n.includes("table")) return Database
+    if (n.includes("api") || n.includes("http") || n.includes("fetch") || n.includes("request")) return Globe
+    if (n.includes("auth") || n.includes("token") || n.includes("permission") || n.includes("security")) return ShieldCheck
+    if (n.includes("chat") || n.includes("message") || n.includes("prompt")) return MessageSquare
+    if (n.includes("stripe") || n.includes("payment") || n.includes("card") || n.includes("billing")) return CreditCard
+    if (n.includes("search") || n.includes("find") || n.includes("query") || n.includes("lookup")) return Search
     return Wrench
   }
 </script>
@@ -41,7 +62,7 @@
       {/if}
 
       {#if hovered}
-        <div class="absolute inset-0 pointer-events-none z-30 rounded-[8px] border-[2px] border-yellow-500" transition:fade={{ duration: 150 }}></div>
+        <div class="absolute inset-0 pointer-events-none z-30 rounded-[8px] border-2 border-yellow-500" transition:fade={{ duration: 150 }}></div>
       {/if}
 
       <div

@@ -1,5 +1,13 @@
 # @gumbee/agent
 
+## 1.4.2
+
+### Patch Changes
+
+- add more supported models for pricing calculation
+- add better tool icons
+- add example apps for agent package
+
 ## 1.4.1
 
 ### Patch Changes

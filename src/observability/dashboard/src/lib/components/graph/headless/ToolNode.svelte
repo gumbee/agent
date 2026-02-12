@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  import type { NodeStatus, ExecutionToolNode, ToolYield } from "@gumbee/agent/graph"
+  import type { NodeStatus, ExecutionToolNode, ToolYield, WithMetadata } from "@gumbee/agent/graph"
   import type { Snippet } from "svelte"
 
   export interface ToolNodeSlotProps {
@@ -8,7 +8,7 @@
     input: unknown
     output: unknown
     error: { message: string; stack?: string } | undefined
-    events: ToolYield[]
+    events: WithMetadata<ToolYield>[]
     selected: boolean
   }
 

@@ -1,6 +1,6 @@
 {
   "name": "@gumbee/agent",
-  "version": "1.4.1",
+  "version": "1.4.2",
   "description": "Agent framework with rich widget and middleware support",
   "author": "Gumbee <mugeeb.hassan@gmail.com>",
   "license": "MIT",

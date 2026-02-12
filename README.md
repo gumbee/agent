@@ -41,7 +41,7 @@ Related Documentation
 
 </br>
 
-![AgentDashboard](https://raw.githubusercontent.com/gumbee/agent/main/docs/assets/AgentDashboardDemo0.gif)
+![AgentDashboard](/docs/assets/AgentDashboardDemo0.gif)
 
 ## Installation
 

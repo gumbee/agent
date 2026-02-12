@@ -51,7 +51,10 @@ export function observability<Context = any>(options?: ObservabilityOptions): Mi
 
     return postBatch().catch((firstError) =>
       new Promise<void>((resolve) => setTimeout(resolve, 500)).then(postBatch).catch((retryError) => {
-        console.error("[Observability] Failed to send events:", { firstError, retryError })
+        console.error(
+          "[Observability] Failed to send events. Make sure your observability dashboard server is running by running `npx @gumbee/agent observe`:",
+          { firstError, retryError },
+        )
       }),
     )
   }
@@ -70,7 +73,10 @@ export function observability<Context = any>(options?: ObservabilityOptions): Mi
     })
       .then(() => {})
       .catch((err) => {
-        console.error("[Observability] Failed to register trace:", err)
+        console.error(
+          "[Observability] Failed to register trace. Make sure your observability dashboard server is running by running `npx @gumbee/agent observe`:",
+          err,
+        )
       })
   }
 

@@ -8,7 +8,12 @@ export type TokenUsage = {
 
 export type ModelPricingFn = (usage: TokenUsage) => number
 
-const createSimplePricing = (inputPerMillion: number, outputPerMillion: number, cacheReadPerMillion: number): ModelPricingFn => {
+const createSimplePricing = (
+  inputPerMillion: number,
+  outputPerMillion: number,
+  cacheReadPerMillion: number,
+  cacheWritePerMillion = 0,
+): ModelPricingFn => {
   return (usage: TokenUsage) => {
     const inputCost = (usage.inputTokens / 1_000_000) * inputPerMillion
     const outputCost = (usage.outputTokens / 1_000_000) * outputPerMillion
@@ -20,29 +25,91 @@ const createSimplePricing = (inputPerMillion: number, outputPerMillion: number, 
       totalCost += (usage.cacheReadTokens / 1_000_000) * cacheReadPerMillion
     }
 
+    if (usage.cacheWriteTokens && usage.cacheWriteTokens > 0) {
+      totalCost += (usage.cacheWriteTokens / 1_000_000) * cacheWritePerMillion
+    }
+
     return totalCost
+  }
+}
+
+const createTieredPricing = (
+  inputPerMillionUnder200k: number,
+  outputPerMillionUnder200k: number,
+  cacheReadPerMillionUnder200k: number,
+  inputPerMillionOver200k: number,
+  outputPerMillionOver200k: number,
+  cacheReadPerMillionOver200k: number,
+): ModelPricingFn => {
+  return (usage: TokenUsage) => {
+    const over200k = usage.inputTokens > 200_000
+    const inputPerMillion = over200k ? inputPerMillionOver200k : inputPerMillionUnder200k
+    const outputPerMillion = over200k ? outputPerMillionOver200k : outputPerMillionUnder200k
+    const cacheReadPerMillion = over200k ? cacheReadPerMillionOver200k : cacheReadPerMillionUnder200k
+    return createSimplePricing(inputPerMillion, outputPerMillion, cacheReadPerMillion)(usage)
   }
 }
 
 // Pricing definitions based on Jan 2026 data
 const PRICING: Record<string, Record<string, ModelPricingFn>> = {
   "openai.responses": {
-    "gpt-5.1": createSimplePricing(1.25, 10.0, 0.125),
-    "gpt-5.1-mini": createSimplePricing(0.3, 2.5, 0.03),
     "gpt-5.2": createSimplePricing(1.75, 14.0, 0.175),
+    "gpt-5.1": createSimplePricing(1.25, 10.0, 0.125),
+    "gpt-5": createSimplePricing(1.25, 10.0, 0.125),
+    "gpt-5-mini": createSimplePricing(0.25, 2.0, 0.025),
+    "gpt-5-nano": createSimplePricing(0.05, 0.4, 0.005),
+    "gpt-5.2-chat-latest": createSimplePricing(1.75, 14.0, 0.175),
+    "gpt-5.1-chat-latest": createSimplePricing(1.25, 10.0, 0.125),
+    "gpt-5-chat-latest": createSimplePricing(1.25, 10.0, 0.125),
+    "gpt-5.1-codex-max": createSimplePricing(1.25, 10.0, 0.125),
+    "gpt-5.1-codex": createSimplePricing(1.25, 10.0, 0.125),
+    "gpt-5-codex": createSimplePricing(1.25, 10.0, 0.125),
+    "gpt-5.2-pro": createSimplePricing(21.0, 168.0, 0),
+    "gpt-5-pro": createSimplePricing(15.0, 120.0, 0),
+    "gpt-4.1": createSimplePricing(2.0, 8.0, 0.5),
+    "gpt-4.1-mini": createSimplePricing(0.4, 1.6, 0.1),
+    "gpt-4.1-nano": createSimplePricing(0.1, 0.4, 0.025),
+    "gpt-4o": createSimplePricing(2.5, 10.0, 1.25),
+    "gpt-4o-2024-05-13": createSimplePricing(5.0, 15.0, 0),
+    "gpt-4o-mini": createSimplePricing(0.15, 0.6, 0.075),
+    "gpt-4o-audio-preview": createSimplePricing(2.5, 10.0, 0),
+    o1: createSimplePricing(15.0, 60.0, 7.5),
+    o3: createSimplePricing(2.0, 8.0, 0.5),
+    "o3-deep-research": createSimplePricing(10.0, 40.0, 2.5),
+    "o4-mini": createSimplePricing(1.1, 4.4, 0.275),
+    "o4-mini-deep-research": createSimplePricing(2.0, 8.0, 0.5),
+    "o3-mini": createSimplePricing(1.1, 4.4, 0.55),
     "gpt-5.1-codex-mini": createSimplePricing(0.25, 2, 0.025),
-    "gpt-5.1-codex": createSimplePricing(0.5, 4, 0.05),
-    "gpt-5-mini": createSimplePricing(0.25, 2, 0.025),
+    "codex-mini-latest": createSimplePricing(1.5, 6.0, 0.375),
+    "gpt-4o-mini-search-preview": createSimplePricing(0.15, 0.6, 0),
+    "gpt-4o-search-preview": createSimplePricing(2.5, 10.0, 0),
+    "computer-use-preview": createSimplePricing(3.0, 12.0, 0),
+    "gpt-image-1.5": createSimplePricing(5.0, 10.0, 1.25),
+    "gpt-image-1": createSimplePricing(5.0, 0, 1.25),
+    "gpt-image-1-mini": createSimplePricing(2.0, 0, 0.2),
   },
   anthropic: {
-    "claude-4-5-sonnet": createSimplePricing(3.0, 15.0, 0.3),
-    "claude-4-5-opus": createSimplePricing(5.0, 25.0, 0.5),
+    "claude-opus-4-6": createSimplePricing(5.0, 25.0, 0.5, 6.25),
+    "claude-opus-4-5": createSimplePricing(5.0, 25.0, 0.5, 6.25),
+    "claude-opus-4-1": createSimplePricing(15.0, 75.0, 1.5, 18.75),
+    "claude-opus-4-0": createSimplePricing(15.0, 75.0, 1.5, 18.75),
+    "claude-sonnet-4-5": createSimplePricing(3.0, 15.0, 0.3, 3.75),
+    "claude-sonnet-4-0": createSimplePricing(3.0, 15.0, 0.3, 3.75),
+    "claude-3-7-sonnet-latest": createSimplePricing(3.0, 15.0, 0.3, 3.75),
+    "claude-haiku-4-5": createSimplePricing(1.0, 5.0, 0.1, 1.25),
+    "claude-3-5-haiku-latest": createSimplePricing(0.8, 4.0, 0.08, 1.0),
+    "claude-3-haiku-20240307": createSimplePricing(0.25, 1.25, 0.03, 0.3),
   },
   "google.generative-ai": {
-    "gemini-2.5-pro": createSimplePricing(1.25, 10.0, 0.125),
-    "gemini-2.5-flash": createSimplePricing(0.3, 1.2, 0.03),
-    "gemini-3-pro": createSimplePricing(2.0, 12.0, 0.2),
-    "gemini-3-flash": createSimplePricing(0.5, 3.0, 0.05),
+    "gemini-3-pro-preview": createTieredPricing(2.0, 12.0, 0.2, 4.0, 18.0, 0.4),
+    "gemini-3-flash-preview": createSimplePricing(0.5, 3.0, 0.05),
+    "gemini-3-pro-image-preview": createSimplePricing(2.0, 12.0, 0),
+    "gemini-2.5-pro": createTieredPricing(1.25, 10.0, 0.125, 2.5, 15.0, 0.25),
+    "gemini-2.5-flash": createSimplePricing(0.3, 2.5, 0.03),
+    "gemini-2.5-flash-preview-09-2025": createSimplePricing(0.3, 2.5, 0.03),
+    "gemini-2.5-flash-lite": createSimplePricing(0.1, 0.4, 0.01),
+    "gemini-2.5-flash-lite-preview-09-2025": createSimplePricing(0.1, 0.4, 0.01),
+    "gemini-2.0-flash": createSimplePricing(0.1, 0.4, 0.025),
   },
   "xai.chat": {
     "grok-code-fast-1": createSimplePricing(0.2, 1.5, 0.02),
