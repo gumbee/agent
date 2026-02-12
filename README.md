@@ -40,7 +40,7 @@ Related Documentation
 
 </br>
 
-![AgentDashboard](./docs/assets/AgentDashboardDemo0.gif)
+![AgentDashboard](/docs/assets/AgentDashboardDemo0.gif)
 
 ## Installation
 
