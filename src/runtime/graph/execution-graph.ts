@@ -175,7 +175,7 @@ export class ExecutionGraph {
         node.events.push(event)
         if (event.part.type === "finish-step" && event.part.usage) {
           const usage = event.part.usage
-          const cacheRead = usage.inputTokenDetails?.cacheReadTokens
+          const cacheRead = usage.inputTokenDetails?.cacheReadTokens ?? usage.cachedInputTokens
           const cacheWrite = usage.inputTokenDetails?.cacheWriteTokens
           node.usage = {
             inputTokens: (node.usage?.inputTokens ?? 0) + (usage.inputTokens ?? 0),

@@ -1,5 +1,11 @@
 # @gumbee/agent
 
+## 1.4.3
+
+### Patch Changes
+
+- calculate token cache usage according to new usage types
+
 ## 1.4.2
 
 ### Patch Changes
