@@ -23,7 +23,7 @@ const chatWidgets = new DescribeRegistry()
   })
   .add(MedicationListWidget, {
     id: "MedicationList",
-    description: "Grouped medication symptoms by frequency.",
+    description: "List of medications with their names and descriptions.",
   })
   .add(SymptomListWidget, {
     id: "SymptomList",

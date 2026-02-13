@@ -17,11 +17,12 @@ type AppContext = {
   requestId: string
 }
 
-// 2. Create the agent with the context type
-const myAgent = agent<AppContext>({
+// 2. Create the agent and annotate context in callbacks
+const myAgent = agent({
   name: "assistant",
   description: "A helpful assistant",
   model: openai("gpt-4o"),
+  system: (context: AppContext) => `You are helping user ${context.userId}.`,
   // ...
 })
 ```
@@ -31,9 +32,9 @@ const myAgent = agent<AppContext>({
 The `system` option can be a function that receives the context and returns the system prompt string (or a Promise resolving to it). This is perfect for injecting dynamic information like the current time or fetching user-specific instructions from a database.
 
 ```typescript
-const myAgent = agent<AppContext>({
+const myAgent = agent({
   // ...
-  system: async (context) => {
+  system: async (context: AppContext) => {
     // Fetch user dynamically from DB using the ID from context
     const user = await context.db.users.findUnique({
       where: { id: context.userId },
@@ -62,13 +63,13 @@ Tools receive the context as the second argument to their `execute` function.
 ```typescript
 import { tool, z } from "@gumbee/agent"
 
-const getOrdersTool = tool<AppContext>({
+const getOrdersTool = tool({
   name: "get_orders",
   description: "Get recent orders",
   input: z.object({
     limit: z.number().default(5),
   }),
-  execute: async ({ limit }, context) => {
+  execute: async ({ limit }, context: AppContext) => {
     // Access database from context
     return await context.db.orders.findMany({
       where: { userId: context.userId },
@@ -93,14 +94,14 @@ type AppContext = {
 }
 
 // 2. Define Tool using Context
-const updateProfileTool = tool<AppContext>({
+const updateProfileTool = tool({
   name: "update_profile",
   description: "Update user profile settings",
   input: z.object({
     key: z.enum(["theme", "notifications"]),
     value: z.string(),
   }),
-  execute: async ({ key, value }, context) => {
+  execute: async ({ key, value }, context: AppContext) => {
     console.log(`Updating ${key} for user ${context.userId}`)
     await context.db.users.update({
       where: { id: context.userId },
@@ -111,12 +112,12 @@ const updateProfileTool = tool<AppContext>({
 })
 
 // 3. Create Agent with Dynamic System Prompt
-const assistant = agent<AppContext>({
+const assistant = agent({
   name: "personal-assistant",
   description: "A personalized assistant",
   model: openai("gpt-4o"),
   tools: [updateProfileTool],
-  system: async (context) => {
+  system: async (context: AppContext) => {
     // Async fetch of user data
     const user = await context.db.users.findUnique({
       where: { id: context.userId },

@@ -62,11 +62,11 @@ type AppContext = {
   apiKey: string
 }
 
-const myAgent = agent<AppContext>({
+const myAgent = agent({
   name: "user-assistant",
   description: "An assistant that helps users",
   model: openai("gpt-4o"),
-  system: (context) => `You are helping user ${context.userId}`,
+  system: (context: AppContext) => `You are helping user ${context.userId}`,
   // ...
 })
 
