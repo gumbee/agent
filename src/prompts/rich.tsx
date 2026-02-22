@@ -206,6 +206,7 @@ export function WidgetSchemaResultPrompt({ intent, registry, widgetIds }: Widget
           Output the JSON array directly in your response text wrapped in <Code inline>```structured</Code> code fences
         </Item>
         <Item>Do NOT call any tools - these type definitions describe JSON objects, not tools</Item>
+        <Item>Respect the field order of the schema. Try to use the same field name ordering as the schema.</Item>
         <Item>Use widgets to create a rich, engaging response</Item>
         <Item>Match widget types semantically to content (e.g., Person for people, Location for places)</Item>
       </List>

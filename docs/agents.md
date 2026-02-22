@@ -265,6 +265,43 @@ for await (const event of stream) {
 }
 ```
 
+### Subagents with Different Context Types
+
+Use `handoff(...)` when the parent and subagent require different context shapes.
+
+```typescript
+import { agent, handoff } from "@gumbee/agent"
+
+type ParentContext = {
+  userId: string
+  region: string
+}
+
+type BillingContext = {
+  accountId: string
+  billingRegion: string
+}
+
+const billingAgent = agent({
+  name: "billing-specialist",
+  description: "Handles billing questions",
+  model: openai("gpt-4o"),
+  system: (ctx: BillingContext) => `Handle billing for account ${ctx.accountId} in ${ctx.billingRegion}`,
+})
+
+const orchestrator = agent({
+  name: "orchestrator",
+  description: "Routes requests to specialists",
+  model: openai("gpt-4o"),
+  tools: [
+    handoff(billingAgent, (ctx: ParentContext) => ({
+      accountId: ctx.userId,
+      billingRegion: ctx.region,
+    })),
+  ],
+})
+```
+
 ## Stop Conditions
 
 Control when the agent loop terminates:

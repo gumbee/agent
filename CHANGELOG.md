@@ -1,5 +1,19 @@
 # @gumbee/agent
 
+## 1.5.0
+
+### Minor Changes
+
+- add handoff factory
+
+## 1.4.4
+
+### Patch Changes
+
+- Updated dependencies
+- Updated dependencies
+  - @gumbee/structured@1.1.0
+
 ## 1.4.3
 
 ### Patch Changes

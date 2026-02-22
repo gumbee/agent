@@ -302,3 +302,46 @@ const analysisAgent = agent({
 When `Input` is the default `string | UserModelMessage`, no `toPrompt` is needed -- the input is passed directly to the LLM.
 
 See the [Agents documentation](./agents.md#subagents) for more details on subagent patterns.
+
+### Context Handoff for Subagents
+
+If a parent agent and subagent use different context types, wrap the subagent with `handoff(...)`.
+
+```typescript
+import { agent, handoff } from "@gumbee/agent"
+
+type ParentContext = {
+  userId: string
+  apiKey: string
+}
+
+type ResearchContext = {
+  userId: string
+  searchClient: SearchClient
+}
+
+const researchAgent = agent({
+  name: "researcher",
+  description: "Finds and summarizes information",
+  model: openai("gpt-4o"),
+  system: (ctx: ResearchContext) => `Research for user ${ctx.userId}`,
+})
+
+const orchestrator = agent({
+  name: "orchestrator",
+  description: "Coordinates specialized agents",
+  model: openai("gpt-4o"),
+  tools: [
+    handoff(researchAgent, (ctx: ParentContext) => ({
+      userId: ctx.userId,
+      searchClient: createSearchClient(ctx.apiKey),
+    })),
+  ],
+})
+```
+
+`handoff` preserves subagent behavior:
+
+- The wrapped agent is still identified as an agent tool (not a regular tool)
+- Runtime events still include correct execution path and parent/child relationships
+- Middleware propagation and descent rules continue to apply

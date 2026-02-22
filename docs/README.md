@@ -41,6 +41,7 @@ for await (const event of stream) {
 - **Execution Graph** - Every `agent.run()` creates an execution graph tracking the full execution tree
 - **Tool Support** - Define custom tools with typed inputs/outputs using Zod schemas
 - **Subagents** - Agents can use other agents as tools
+- **Context Handoff** - Use `handoff(...)` to compose agents with incompatible context types
 - **Middleware** - Composable middleware for logging, fallbacks, caching, and more
 - **Rich Widgets** - Support for structured widget outputs in responses
 - **Provider Options** - Configure provider-specific features like Claude thinking or OpenAI reasoning

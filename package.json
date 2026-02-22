@@ -1,6 +1,6 @@
 {
   "name": "@gumbee/agent",
-  "version": "1.4.3",
+  "version": "1.5.0",
   "description": "Agent framework with rich widget and middleware support",
   "author": "Gumbee <mugeeb.hassan@gmail.com>",
   "license": "MIT",
@@ -79,10 +79,9 @@
     "@hono/node-ws": "^1.1.0",
     "hono": "^4.7.0",
     "lib0": "^0.2.85",
-    "@gumbee/structured": "^1.0.0",
+    "@gumbee/structured": "^1.1.0",
     "@gumbee/prompt": "^1.0.0",
     "y-protocols": "^1.0.7",
-    "y-websocket": "^2.0.0",
     "yjs": "^13.6.0"
   },
   "devDependencies": {

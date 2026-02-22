@@ -4,6 +4,7 @@
 
 export { agent } from "./runtime/agent"
 export { tool, isTool, isAgent, convertRunnersForAI, formatToolOutput } from "./runtime/tool"
+export { handoff } from "./runtime/handoff"
 
 // =============================================================================
 // Run Loop
@@ -137,7 +138,7 @@ export { stopAfterSteps, stopOnFinish, stopOnToolCall, stopAny, stopAll, DEFAULT
 export { structured, type AiSdkStructuredOptions } from "./structured"
 
 // Re-export schema utilities from @gumbee/structured
-export { z, DescribeRegistry } from "@gumbee/structured"
+export { z, dynamic, DescribeRegistry } from "@gumbee/structured"
 // Re-export query utilities from @gumbee/structured/queries
 export { isCompleted } from "@gumbee/structured/queries"
 

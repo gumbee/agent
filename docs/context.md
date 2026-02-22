@@ -154,3 +154,43 @@ for await (const event of stream) {
    - All tools executed by the agent
    - Any subagents called by the agent (subagents receive the same context instance)
 3. **Middleware**: Middleware also receives the context, allowing for cross-cutting concerns like logging or permission checks based on user roles.
+
+## Context Handoff Between Agents
+
+By default, subagents receive the same context type as their parent. If two agents require different context shapes, use `handoff` to map external context to the subagent's internal context.
+
+```typescript
+import { agent, handoff } from "@gumbee/agent"
+
+type ParentContext = {
+  userId: string
+  db: DatabaseConnection
+  searchApiKey: string
+}
+
+type SearchContext = {
+  userId: string
+  search: SearchClient
+}
+
+const searchAgent = agent({
+  name: "search-specialist",
+  description: "Searches external sources",
+  model: openai("gpt-4o"),
+  system: (ctx: SearchContext) => `Search on behalf of user ${ctx.userId}`,
+})
+
+const coordinator = agent({
+  name: "coordinator",
+  description: "Coordinates specialist agents",
+  model: openai("gpt-4o"),
+  tools: [
+    handoff(searchAgent, (ctx: ParentContext) => ({
+      userId: ctx.userId,
+      search: createSearchClient(ctx.searchApiKey),
+    })),
+  ],
+})
+```
+
+This lets you keep each agent strongly typed while still composing them in one execution tree.

@@ -74,27 +74,19 @@ export function createWidgetSchemaTool(registry: DescribeRegistry, pickerModel: 
         },
       })
 
-      try {
-        const selectedWidgetIds = (await result.object) as string[]
+      const selectedWidgetIds = (await result.object) as string[]
 
-        console.log("Widget schema tool success --- Text", await result.text, JSON.stringify(selectedWidgetIds, null, 2))
+      // Get unique widget IDs
+      const uniqueIds = [...new Set(selectedWidgetIds)]
 
-        // Get unique widget IDs
-        const uniqueIds = [...new Set(selectedWidgetIds)]
-
-        return {
-          instructions: renderToString(
-            WidgetSchemaResultPrompt({
-              intent,
-              registry,
-              widgetIds: uniqueIds,
-            }),
-          ),
-        }
-      } catch (error) {
-        console.log("Widget schema tool fail - ---- Error", error)
-        console.log("Widget schema tool fail - ---- Text", await result.text)
-        return undefined
+      return {
+        instructions: renderToString(
+          WidgetSchemaResultPrompt({
+            intent,
+            registry,
+            widgetIds: uniqueIds,
+          }),
+        ),
       }
     },
   })
