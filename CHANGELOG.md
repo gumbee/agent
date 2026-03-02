@@ -1,5 +1,11 @@
 # @gumbee/agent
 
+## 1.5.2
+
+### Patch Changes
+
+- separate dashboard build from package build
+
 ## 1.5.1
 
 ### Patch Changes
