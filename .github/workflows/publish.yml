@@ -48,7 +48,9 @@ jobs:
         run: bun install --frozen-lockfile
 
       - name: Build
-        run: bun run build
+        run: |
+          bun run build
+          bun run build:dashboard
 
       - name: Verify dashboard build
         run: |
