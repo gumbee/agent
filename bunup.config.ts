@@ -1,7 +1,7 @@
 import { defineConfig } from "bunup"
 
 export default defineConfig({
-  entry: ["src/index.ts", "src/graph.ts", "src/observability.ts", "src/observability/cli.ts"],
+  entry: ["src/index.ts", "src/graph.ts", "src/observability.ts", "src/schema.ts", "src/observability/cli.ts"],
   format: ["esm", "cjs"],
   dts: {
     splitting: true,

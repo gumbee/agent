@@ -1,6 +1,6 @@
 {
   "name": "@gumbee/agent",
-  "version": "1.5.0",
+  "version": "1.5.1",
   "description": "Agent framework with rich widget and middleware support",
   "author": "Gumbee <mugeeb.hassan@gmail.com>",
   "license": "MIT",
@@ -49,6 +49,16 @@
       "require": {
         "types": "./dist/observability.d.cts",
         "default": "./dist/observability.cjs"
+      }
+    },
+    "./schema": {
+      "import": {
+        "types": "./dist/schema.d.ts",
+        "default": "./dist/schema.js"
+      },
+      "require": {
+        "types": "./dist/schema.d.cts",
+        "default": "./dist/schema.cjs"
       }
     },
     "./package.json": "./package.json"

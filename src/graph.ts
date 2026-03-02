@@ -61,3 +61,5 @@ export {
   isAgentStream,
   isWidgetDelta,
 } from "./runtime/types"
+
+export { estimateTokenCount, estimateMessageTokens } from "./utils/token-estimator"

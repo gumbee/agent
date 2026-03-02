@@ -1,5 +1,11 @@
 # @gumbee/agent
 
+## 1.5.1
+
+### Patch Changes
+
+- expose token estimation utilities
+
 ## 1.5.0
 
 ### Minor Changes
