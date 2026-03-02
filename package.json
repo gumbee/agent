@@ -76,7 +76,7 @@
   "sideEffects": false,
   "scripts": {
     "build": "bunup",
-    "build:dashboard": "cd src/observability/dashboard && bun run build",
+    "build:dashboard": "cd src/observability/dashboard && bun install && bun run build",
     "dev": "bunup --watch",
     "type-check": "tsc --noEmit",
     "lint": "eslint src/",
