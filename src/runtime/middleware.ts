@@ -102,6 +102,8 @@ export type AgentStepMiddlewareContext<Context = any> = {
   widgetPicker?: LanguageModel2 | WidgetPickerOptions
   /** Provider-specific options (e.g. thinking budget for Claude) */
   providerOptions?: Record<string, Record<string, JSONValue>>
+  /** Maximum tokens to generate for this step's model response */
+  maxOutputTokens?: number
   /** Memory for reading/storing messages */
   memory: Memory
   /** Application-level context */

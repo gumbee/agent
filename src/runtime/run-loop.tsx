@@ -47,7 +47,7 @@ function composeStepMiddleware<Context>(
  * Emits agent-step-llm-call event, streams the response, stores messages, and returns the finish reason.
  */
 async function* executeStep<Context>(c: AgentStepMiddlewareContext<Context>): AgentStepMiddlewareResult<any> {
-  const { path, nodeId, model, tools: baseTools, widgets, widgetPicker, providerOptions, env, context, memory } = c
+  const { path, nodeId, model, tools: baseTools, widgets, widgetPicker, providerOptions, maxOutputTokens, env, context, memory } = c
 
   // Collect all tools including widget schema tool (uses c.model which may be modified by middleware)
   const allTools: Runner<Context>[] = [...baseTools]
@@ -112,6 +112,7 @@ async function* executeStep<Context>(c: AgentStepMiddlewareContext<Context>): Ag
     messages: messages,
     tools,
     providerOptions: providerOptions,
+    maxOutputTokens,
     abortSignal: env.abort,
   })
 
@@ -174,7 +175,7 @@ async function* executeStep<Context>(c: AgentStepMiddlewareContext<Context>): Ag
  * graph-based trace system.
  */
 export async function* executeLoop<Context>(data: AgentLoopContext<Context>): AsyncGenerator<RuntimeYield<any>, void, unknown> {
-  const { system, tools, context, env, memory, widgets, widgetPicker, model, providerOptions, stopCondition } = data
+  const { system, tools, context, env, memory, widgets, widgetPicker, model, providerOptions, maxOutputTokens, stopCondition } = data
   // Get current node from context
   const node = getCurrentNode()
 
@@ -232,6 +233,7 @@ export async function* executeLoop<Context>(data: AgentLoopContext<Context>): As
         widgets,
         widgetPicker,
         providerOptions,
+        maxOutputTokens,
         env,
         memory,
         context,

@@ -105,6 +105,7 @@ export const agent = <
       stopCondition,
       model: config.model,
       providerOptions: config.providerOptions,
+      maxOutputTokens: config.maxOutputTokens,
       system: config.system,
       tools: config.tools,
       widgets: config.widgets,

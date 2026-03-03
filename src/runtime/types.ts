@@ -262,6 +262,8 @@ export type AgentConfig<Context = {}, Input = string, Output = { response: strin
   widgetPicker?: LanguageModel2 | WidgetPickerOptions
   /** Provider-specific options (e.g. thinking budget for Claude) */
   providerOptions?: Record<string, Record<string, JSONValue>>
+  /** Maximum tokens to generate for a single model response */
+  maxOutputTokens?: number
 }
 
 /**
@@ -297,6 +299,7 @@ export type AgentLoopContext<Context> = {
   widgets?: AgentConfig<Context>["widgets"]
   widgetPicker?: AgentConfig<Context>["widgetPicker"]
   providerOptions?: AgentConfig<Context>["providerOptions"]
+  maxOutputTokens?: AgentConfig<Context>["maxOutputTokens"]
 }
 
 /**
