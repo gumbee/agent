@@ -104,7 +104,7 @@ const weatherAgent = agent({
 - `middleware`: cross-cutting behavior
 - `stopCondition`: controls loop termination
 - `widgets`: widget schema registry
-- `widgetsPickerModel`: optional picker model for widget schema selection
+- `widgetPicker`: optional widget picker model/options (including custom prompt) for widget schema selection
 - `providerOptions`: provider-specific options
 - `input` + `toPrompt`: structured input support for subagent use
 - `execute`: override execution flow (advanced)
@@ -443,7 +443,15 @@ const uiAgent = agent({
   description: "Returns rich UI widgets",
   model: openai("gpt-4o"),
   widgets,
-  widgetsPickerModel: openai("gpt-4o-mini"),
+  widgetPicker: {
+    model: openai("gpt-4o-mini"), // Or shorthand: widgetPicker: openai("gpt-4o-mini")
+    providerOptions: {
+      openai: {
+        reasoningEffort: "low",
+      },
+    },
+    prompt: ({ intent, widgets }) => `Pick the best widget ids for intent "${intent}". Available: ${widgets.map((w) => w.id).join(", ")}`,
+  },
 })
 ```
 

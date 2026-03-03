@@ -19,23 +19,23 @@ const myAgent = agent({
 
 ## Configuration Options
 
-| Option               | Type               | Description                                                                                  |
-| -------------------- | ------------------ | -------------------------------------------------------------------------------------------- |
-| `name`               | `string`           | Required identifier for the agent                                                            |
-| `description`        | `string`           | Required description shown to parent agents when used as tool                                |
-| `model`              | `LanguageModel`    | Required AI SDK language model to use                                                        |
-| `system`             | `string \| fn`     | System prompt (string or function receiving context)                                         |
-| `instructions`       | `string`           | Instructions used when agent runs as a subagent                                              |
-| `input`              | `z.ZodSchema`      | Optional input schema for structured input when agent is used as a subagent                  |
-| `toPrompt`           | `fn`               | Maps structured input to a prompt. Required when `Input` is not `string \| UserModelMessage` |
-| `execute`            | `fn`               | Optional custom execution logic (receives `run`, `input`, `context`, `env`)                  |
-| `tools`              | `Runner[]`         | Optional array of tools or agents the agent can use                                          |
-| `memory`             | `Memory`           | Optional default memory implementation                                                       |
-| `middleware`         | `Middleware[]`     | Optional array of middleware                                                                 |
-| `stopCondition`      | `StopCondition`    | Optional condition for when to stop the agent loop                                           |
-| `widgets`            | `DescribeRegistry` | Optional registry for rich widget outputs                                                    |
-| `widgetsPickerModel` | `LanguageModel`    | Optional model for widget schema selection                                                   |
-| `providerOptions`    | `object`           | Optional provider-specific options (e.g., thinking, reasoning)                               |
+| Option            | Type                                                    | Description                                                                                  |
+| ----------------- | ------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `name`            | `string`                                                | Required identifier for the agent                                                            |
+| `description`     | `string`                                                | Required description shown to parent agents when used as tool                                |
+| `model`           | `LanguageModel`                                         | Required AI SDK language model to use                                                        |
+| `system`          | `string \| fn`                                          | System prompt (string or function receiving context)                                         |
+| `instructions`    | `string`                                                | Instructions used when agent runs as a subagent                                              |
+| `input`           | `z.ZodSchema`                                           | Optional input schema for structured input when agent is used as a subagent                  |
+| `toPrompt`        | `fn`                                                    | Maps structured input to a prompt. Required when `Input` is not `string \| UserModelMessage` |
+| `execute`         | `fn`                                                    | Optional custom execution logic (receives `run`, `input`, `context`, `env`)                  |
+| `tools`           | `Runner[]`                                              | Optional array of tools or agents the agent can use                                          |
+| `memory`          | `Memory`                                                | Optional default memory implementation                                                       |
+| `middleware`      | `Middleware[]`                                          | Optional array of middleware                                                                 |
+| `stopCondition`   | `StopCondition`                                         | Optional condition for when to stop the agent loop                                           |
+| `widgets`         | `DescribeRegistry`                                      | Optional registry for rich widget outputs                                                    |
+| `widgetPicker`    | `LanguageModel \| { model, providerOptions?, prompt? }` | Optional widget picker model/options (separate from main `providerOptions`)                  |
+| `providerOptions` | `object`                                                | Optional provider-specific options (e.g., thinking, reasoning)                               |
 
 ## Running an Agent
 
@@ -471,7 +471,15 @@ const myAgent = agent({
   description: "Assistant with rich UI",
   model: openai("gpt-4o"),
   widgets: registry,
-  widgetsPickerModel: openai("gpt-4o-mini"), // Faster model for widget selection
+  widgetPicker: {
+    model: openai("gpt-4o-mini"), // Or shorthand: widgetPicker: openai("gpt-4o-mini")
+    providerOptions: {
+      openai: {
+        reasoningEffort: "low",
+      },
+    },
+    prompt: ({ intent, widgets }) => `Intent: ${intent}\n\nAvailable widgets:\n${widgets.map((w) => `- ${w.id}`).join("\n")}`,
+  },
 })
 
 // Stream widget updates

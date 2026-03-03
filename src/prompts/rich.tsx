@@ -127,7 +127,10 @@ export function WidgetPickerPrompt({ intent, widgets }: WidgetPickerPromptProps)
       <Linebreak repeat={2} />
       <Heading level={3}>Selection guidelines</Heading>
       <List>
-        <Item>Use semantically appropriate widgets: Person for people, Location for places, Recipe for cooking instructions, etc.</Item>
+        <Item>
+          Use semantically appropriate widgets. Different topics might lean towrads using different widgets. Pick as many relevant widgets as possible
+          to help the agent create a rich, engaging response.
+        </Item>
         <Item>Include structural widgets (SectionHeader, List, Text) to organize content</Item>
         <Item>Include Tldr for summaries when the response is comprehensive</Item>
         <Item>Match widget types to the content being described - don't use generic Text when a specialized widget fits better</Item>
@@ -135,7 +138,7 @@ export function WidgetPickerPrompt({ intent, widgets }: WidgetPickerPromptProps)
       </List>
       <Linebreak />
       Choose widgets that best represent the information you're about to present. Use specialized widgets where appropriate rather than defaulting to
-      generic ones.
+      generic ones. You're allowed to pick many relevant widgets to help the agent create a rich, engaging response.
       <Linebreak repeat={2} />
       <Heading level={3}>Available widgets (id: description)</Heading>
       <List>

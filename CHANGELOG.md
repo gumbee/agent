@@ -1,5 +1,11 @@
 # @gumbee/agent
 
+## 1.6.0
+
+### Minor Changes
+
+- allow customization of widget picker
+
 ## 1.5.2
 
 ### Patch Changes

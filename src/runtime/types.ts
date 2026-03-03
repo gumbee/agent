@@ -20,6 +20,7 @@ import type { ExecutionGraph } from "./graph/execution-graph"
 export type ModelMessage = AIModelMessage
 export type FinishReason = AIFinishReason | "stop-condition"
 export type { LanguageModel, UserModelMessage } from "ai"
+export type LanguageModel2 = LanguageModel
 
 // =============================================================================
 // Runner Interface (base for both agents and tools)
@@ -72,6 +73,19 @@ export type ThinkingConfig = {
   level?: "minimal" | "low" | "medium" | "high"
   budgetTokens?: number
 }
+
+export type WidgetPickerOptions = {
+  model: LanguageModel2
+  providerOptions?: Record<string, Record<string, JSONValue>>
+  prompt?: WidgetPickerPromptOverride
+}
+
+export type WidgetPickerPromptInput = {
+  intent: string
+  widgets: { id: string; description?: string }[]
+}
+
+export type WidgetPickerPromptOverride = (input: WidgetPickerPromptInput) => string | UserModelMessage | ModelMessage[]
 
 // Agent yields
 export type AgentBeginYield = { type: "agent-begin"; name: string; input: unknown }
@@ -244,8 +258,8 @@ export type AgentConfig<Context = {}, Input = string, Output = { response: strin
   stopCondition?: StopCondition
   /** Widget registry for rich UI responses */
   widgets?: DescribeRegistry
-  /** Model to use for widget selection (defaults to main model) */
-  widgetsPickerModel?: LanguageModel
+  /** Model/options to use for widget selection (defaults to main model) */
+  widgetPicker?: LanguageModel2 | WidgetPickerOptions
   /** Provider-specific options (e.g. thinking budget for Claude) */
   providerOptions?: Record<string, Record<string, JSONValue>>
 }
@@ -281,7 +295,7 @@ export type AgentLoopContext<Context> = {
   model: AgentConfig<Context>["model"]
   tools?: AgentConfig<Context>["tools"]
   widgets?: AgentConfig<Context>["widgets"]
-  widgetsPickerModel?: AgentConfig<Context>["widgetsPickerModel"]
+  widgetPicker?: AgentConfig<Context>["widgetPicker"]
   providerOptions?: AgentConfig<Context>["providerOptions"]
 }
 

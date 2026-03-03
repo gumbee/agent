@@ -1,11 +1,12 @@
 import { z } from "@gumbee/structured"
 import { structured } from "../../structured"
 import type { DescribeRegistry } from "@gumbee/structured"
+import type { JSONValue } from "ai"
 import { tool } from "../tool"
-import type { LanguageModel, Tool } from "../types"
+import type { LanguageModel, ModelMessage, Tool, WidgetPickerPromptOverride } from "../types"
 import { renderToIR, renderToString } from "@gumbee/prompt"
 import { RichWidgetsPrompt, WidgetPickerPrompt, WidgetSchemaResultPrompt } from "../../prompts/rich"
-import { messagesToString, prompt } from "@gumbee/prompt/ai-sdk"
+import { prompt } from "@gumbee/prompt/ai-sdk"
 
 /**
  * Input schema for the widget schema tool.
@@ -23,7 +24,12 @@ type WidgetSchemaOutput = { instructions: string } | undefined
  * The tool uses a fast model to analyze the conversation and pick the most
  * relevant widgets, then returns their TypeScript schema for the LLM to use.
  */
-export function createWidgetSchemaTool(registry: DescribeRegistry, pickerModel: LanguageModel): Tool<any, WidgetSchemaInput, WidgetSchemaOutput> {
+export function createWidgetSchemaTool(
+  registry: DescribeRegistry,
+  pickerModel: LanguageModel,
+  pickerProviderOptions?: Record<string, Record<string, JSONValue>>,
+  pickerPrompt?: WidgetPickerPromptOverride,
+): Tool<any, WidgetSchemaInput, WidgetSchemaOutput> {
   // Extract system prompt from RichWidgetsPrompt
   // We pass empty messages to get just the system part
   // Note: RichWidgetsPrompt returns a Fragment with mapped messages and then a System message.
@@ -52,26 +58,26 @@ export function createWidgetSchemaTool(registry: DescribeRegistry, pickerModel: 
     execute: async (input) => {
       const { intent } = input
 
-      const messages = prompt(
-        WidgetPickerPrompt({
-          intent,
-          widgets,
-        }),
-      )
-
-      // console.log("Widget picker prompt", messagesToString(messages))
+      const customPrompt = pickerPrompt?.({ intent, widgets })
+      const messages: ModelMessage[] =
+        customPrompt === undefined
+          ? prompt(
+              WidgetPickerPrompt({
+                intent,
+                widgets,
+              }),
+            )
+          : typeof customPrompt === "string"
+            ? [{ role: "user", content: customPrompt }]
+            : Array.isArray(customPrompt)
+              ? customPrompt
+              : [customPrompt]
 
       const result = await structured({
         model: pickerModel,
         messages,
         schema: z.array(z.string()),
-        providerOptions: {
-          google: {
-            thinkingConfig: {
-              thinkingBudget: 0,
-            },
-          },
-        },
+        providerOptions: pickerProviderOptions,
       })
 
       const selectedWidgetIds = (await result.object) as string[]

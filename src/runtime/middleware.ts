@@ -17,12 +17,14 @@ import type {
   Agent,
   AgentLoopContext,
   FinishReason,
+  LanguageModel2,
   Runner,
   RunnerEnvironment,
   RuntimeYield,
   SystemPrompt,
   Tool,
   ToolYield,
+  WidgetPickerOptions,
   WithMetadata,
 } from "./types"
 
@@ -96,8 +98,8 @@ export type AgentStepMiddlewareContext<Context = any> = {
   tools: Runner<Context>[]
   /** Widget registry for rich UI responses */
   widgets?: DescribeRegistry
-  /** Model to use for widget selection */
-  widgetsPickerModel?: LanguageModel
+  /** Model/options to use for widget selection */
+  widgetPicker?: LanguageModel2 | WidgetPickerOptions
   /** Provider-specific options (e.g. thinking budget for Claude) */
   providerOptions?: Record<string, Record<string, JSONValue>>
   /** Memory for reading/storing messages */

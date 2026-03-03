@@ -108,7 +108,7 @@ export const agent = <
       system: config.system,
       tools: config.tools,
       widgets: config.widgets,
-      widgetsPickerModel: config.widgetsPickerModel,
+      widgetPicker: config.widgetPicker,
     }
 
     // 5. Get inherited middleware entries from ancestor context that want to descend into THIS agent

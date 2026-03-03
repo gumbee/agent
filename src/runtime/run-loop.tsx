@@ -5,7 +5,7 @@ import type { AgentStepMiddlewareContext, AgentStepMiddlewareResult, Middleware 
 import { convertRunnersForAI } from "./tool"
 import { createWidgetSchemaTool } from "./tool-definitions/widget-schema-tool"
 import { transformWidgetStream } from "./widgets-transform"
-import type { WithMetadata, RuntimeYield, Runner, AgentLoopContext, FinishReason } from "./types"
+import type { WithMetadata, RuntimeYield, Runner, AgentLoopContext, FinishReason, LanguageModel, WidgetPickerOptions } from "./types"
 
 /** Check if an item is a RuntimeYield event (from sub-agent/tool queue) vs a base stream part */
 function isRuntimeYield(item: unknown): item is WithMetadata<RuntimeYield> {
@@ -21,6 +21,10 @@ async function* throwOnStreamError<T extends { type: string }>(stream: AsyncIter
     }
     yield item
   }
+}
+
+function isWidgetPickerOptions(value: unknown): value is WidgetPickerOptions {
+  return typeof value === "object" && value !== null && "model" in value
 }
 
 /**
@@ -43,13 +47,27 @@ function composeStepMiddleware<Context>(
  * Emits agent-step-llm-call event, streams the response, stores messages, and returns the finish reason.
  */
 async function* executeStep<Context>(c: AgentStepMiddlewareContext<Context>): AgentStepMiddlewareResult<any> {
-  const { path, nodeId, model, tools: baseTools, widgets, widgetsPickerModel, providerOptions, env, context, memory } = c
+  const { path, nodeId, model, tools: baseTools, widgets, widgetPicker, providerOptions, env, context, memory } = c
 
   // Collect all tools including widget schema tool (uses c.model which may be modified by middleware)
   const allTools: Runner<Context>[] = [...baseTools]
 
   if (widgets && widgets.size > 0) {
-    const widgetTool = createWidgetSchemaTool(widgets, widgetsPickerModel ?? model) as Runner<Context>
+    let pickerModel: LanguageModel = model
+    let pickerProviderOptions: WidgetPickerOptions["providerOptions"]
+    let pickerPrompt: WidgetPickerOptions["prompt"]
+
+    if (widgetPicker) {
+      if (isWidgetPickerOptions(widgetPicker)) {
+        pickerModel = widgetPicker.model
+        pickerProviderOptions = widgetPicker.providerOptions
+        pickerPrompt = widgetPicker.prompt
+      } else {
+        pickerModel = widgetPicker
+      }
+    }
+
+    const widgetTool = createWidgetSchemaTool(widgets, pickerModel, pickerProviderOptions, pickerPrompt) as Runner<Context>
     allTools.push(widgetTool)
   }
 
@@ -156,7 +174,7 @@ async function* executeStep<Context>(c: AgentStepMiddlewareContext<Context>): Ag
  * graph-based trace system.
  */
 export async function* executeLoop<Context>(data: AgentLoopContext<Context>): AsyncGenerator<RuntimeYield<any>, void, unknown> {
-  const { system, tools, context, env, memory, widgets, widgetsPickerModel, model, providerOptions, stopCondition } = data
+  const { system, tools, context, env, memory, widgets, widgetPicker, model, providerOptions, stopCondition } = data
   // Get current node from context
   const node = getCurrentNode()
 
@@ -212,7 +230,7 @@ export async function* executeLoop<Context>(data: AgentLoopContext<Context>): As
         model,
         tools: baseTools,
         widgets,
-        widgetsPickerModel,
+        widgetPicker,
         providerOptions,
         env,
         memory,
